@@ -1,15 +1,16 @@
 import { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { 
-  LayoutDashboard, 
-  Package, 
-  Warehouse, 
+import {
+  LayoutDashboard,
+  Package,
+  Warehouse,
   TruckIcon,
   Bell,
   Database,
   BarChart3,
+  ClipboardList,
   LogOut,
-  User
+  User,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { toast } from "sonner";
@@ -19,21 +20,36 @@ interface DashboardLayoutProps {
 }
 
 const navigation = [
-  { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  {
+    name: "Dashboard",
+    href: "/dashboard",
+    icon: LayoutDashboard,
+  },
   { name: "Product Master", href: "/products", icon: Database },
   { name: "Procurement", href: "/procurement", icon: Package },
   { name: "Warehouse", href: "/warehouse", icon: Warehouse },
+  {
+    name: "Discrepancies",
+    href: "/discrepancies",
+    icon: ClipboardList,
+  },
   { name: "Stock Management", href: "/stock", icon: BarChart3 },
-  { name: "Distribution", href: "/distribution", icon: TruckIcon },
+  {
+    name: "Distribution",
+    href: "/distribution",
+    icon: TruckIcon,
+  },
 ];
 
-export function DashboardLayout({ children }: DashboardLayoutProps) {
+export function DashboardLayout({
+  children,
+}: DashboardLayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
 
   const handleLogout = () => {
     toast.success("Logged Out", {
-      description: "You have been successfully logged out"
+      description: "You have been successfully logged out",
     });
     // Navigate to login after a short delay
     setTimeout(() => {
@@ -49,9 +65,11 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           <h1 className="text-2xl font-semibold tracking-tight">
             Shelf Awareness
           </h1>
-          <p className="text-sm text-white/70 mt-1">Medical Logistics</p>
+          <p className="text-sm text-white/70 mt-1">
+            Medical Logistics
+          </p>
         </div>
-        
+
         <nav className="flex-1 p-4 space-y-2">
           {navigation.map((item) => {
             const isActive = location.pathname === item.href;
@@ -60,8 +78,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 key={item.name}
                 to={item.href}
                 className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                  isActive 
-                    ? "bg-[#00A3AD] text-white shadow-lg" 
+                  isActive
+                    ? "bg-[#00A3AD] text-white shadow-lg"
                     : "text-white/90 hover:bg-white/10"
                 }`}
               >
@@ -79,8 +97,22 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               <User className="w-4 h-4" />
             </div>
             <div className="flex-1">
-              <p className="text-sm font-semibold" style={{ fontFamily: 'Public Sans, sans-serif' }}>Admin User</p>
-              <p className="text-xs text-white/60" style={{ fontFamily: 'Public Sans, sans-serif' }}>admin@shelfaware.ph</p>
+              <p
+                className="text-sm font-semibold"
+                style={{
+                  fontFamily: "Public Sans, sans-serif",
+                }}
+              >
+                Admin User
+              </p>
+              <p
+                className="text-xs text-white/60"
+                style={{
+                  fontFamily: "Public Sans, sans-serif",
+                }}
+              >
+                admin@shelfaware.ph
+              </p>
             </div>
           </div>
 
@@ -89,7 +121,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             onClick={handleLogout}
             className="w-full bg-white/10 hover:bg-white/20 text-white border border-white/20 justify-start gap-3 px-4 rounded-lg font-semibold"
             variant="outline"
-            style={{ fontFamily: 'Public Sans, sans-serif' }}
+            style={{ fontFamily: "Public Sans, sans-serif" }}
           >
             <LogOut className="w-5 h-5" />
             <span>Logout</span>
@@ -105,13 +137,15 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             <h1 className="text-xl font-semibold">
               Shelf Awareness
             </h1>
-            <p className="text-xs text-white/70">Medical Logistics</p>
+            <p className="text-xs text-white/70">
+              Medical Logistics
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <button className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors">
               <Bell className="w-5 h-5" />
             </button>
-            <button 
+            <button
               onClick={handleLogout}
               className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors"
             >
@@ -126,21 +160,21 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         </main>
 
         {/* Mobile Bottom Navigation */}
-        <nav className="lg:hidden bg-white border-t border-[#111827]/10 flex items-center justify-around px-2 py-3 shadow-lg safe-area-inset-bottom">
-          {navigation.slice(0, 5).map((item) => {
+        <nav className="lg:hidden bg-white border-t border-[#111827]/10 flex items-center gap-1 px-2 py-3 shadow-lg safe-area-inset-bottom overflow-x-auto">
+          {navigation.map((item) => {
             const isActive = location.pathname === item.href;
             return (
               <Link
                 key={item.name}
                 to={item.href}
                 className={`flex flex-col items-center gap-1 px-2 py-2 rounded-lg min-w-[48px] min-h-[48px] justify-center transition-colors ${
-                  isActive 
-                    ? "text-[#00A3AD]" 
-                    : "text-[#6B7280]"
+                  isActive ? "text-[#00A3AD]" : "text-[#6B7280]"
                 }`}
               >
                 <item.icon className="w-5 h-5" />
-                <span className="text-[10px] font-medium">{item.name.split(' ')[0]}</span>
+                <span className="text-[10px] font-medium">
+                  {item.name.split(" ")[0]}
+                </span>
               </Link>
             );
           })}
