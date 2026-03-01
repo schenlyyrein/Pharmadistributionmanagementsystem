@@ -32,6 +32,8 @@ interface InventoryItem {
   id: string;
   sku: string;
   name: string;
+  unit: string;
+  lastUpdated: string | null;
   batch: string;
   systemCount: number;
   status: "normal" | "low" | "zero";
@@ -48,16 +50,76 @@ interface GrnLine {
 }
 
 const PRODUCT_CATALOG = [
-  { id: "39", sku: "MED-003", name: "Amoxicillin 500mg",    batch: "#9902", expiry: "2026-12-31" },
-  { id: "37", sku: "MED-001", name: "Paracetamol 500mg",    batch: "#9903", expiry: "2027-03-15" },
-  { id: "40", sku: "MED-004", name: "Cetirizine 10mg",      batch: "#9904", expiry: "2026-08-20" },
-  { id: "41", sku: "MED-005", name: "Loperamide 2mg",       batch: "#9905", expiry: "2026-11-10" },
-  { id: "38", sku: "MED-002", name: "Ibuprofen 200mg",      batch: "#9906", expiry: "2027-01-25" },
-  { id: "42", sku: "VIT-001", name: "Vitamin C 500mg",      batch: "#9907", expiry: "2027-06-01" },
-  { id: "43", sku: "VIT-002", name: "Vitamin D3 1000IU",    batch: "#9908", expiry: "2027-06-01" },
-  { id: "44", sku: "VIT-003", name: "Multivitamins + Iron", batch: "#9909", expiry: "2027-06-01" },
-  { id: "45", sku: "VIT-004", name: "Calcium + Magnesium",  batch: "#9910", expiry: "2027-06-01" },
-  { id: "46", sku: "VIT-005", name: "Fish Oil 1000mg",      batch: "#9911", expiry: "2027-06-01" },
+  {
+    id: "39",
+    sku: "MED-003",
+    name: "Amoxicillin 500mg",
+    batch: "#9902",
+    expiry: "2026-12-31",
+  },
+  {
+    id: "37",
+    sku: "MED-001",
+    name: "Paracetamol 500mg",
+    batch: "#9903",
+    expiry: "2027-03-15",
+  },
+  {
+    id: "40",
+    sku: "MED-004",
+    name: "Cetirizine 10mg",
+    batch: "#9904",
+    expiry: "2026-08-20",
+  },
+  {
+    id: "41",
+    sku: "MED-005",
+    name: "Loperamide 2mg",
+    batch: "#9905",
+    expiry: "2026-11-10",
+  },
+  {
+    id: "38",
+    sku: "MED-002",
+    name: "Ibuprofen 200mg",
+    batch: "#9906",
+    expiry: "2027-01-25",
+  },
+  {
+    id: "42",
+    sku: "VIT-001",
+    name: "Vitamin C 500mg",
+    batch: "#9907",
+    expiry: "2027-06-01",
+  },
+  {
+    id: "43",
+    sku: "VIT-002",
+    name: "Vitamin D3 1000IU",
+    batch: "#9908",
+    expiry: "2027-06-01",
+  },
+  {
+    id: "44",
+    sku: "VIT-003",
+    name: "Multivitamins + Iron",
+    batch: "#9909",
+    expiry: "2027-06-01",
+  },
+  {
+    id: "45",
+    sku: "VIT-004",
+    name: "Calcium + Magnesium",
+    batch: "#9910",
+    expiry: "2027-06-01",
+  },
+  {
+    id: "46",
+    sku: "VIT-005",
+    name: "Fish Oil 1000mg",
+    batch: "#9911",
+    expiry: "2027-06-01",
+  },
 ];
 
 const MIN_STOCK_THRESHOLD = 500;
@@ -73,114 +135,200 @@ const createEmptyLine = (): GrnLine => ({
 
 export function WarehouseReceiving() {
   const [showGrnForm, setShowGrnForm] = useState(false);
-  const [receivedDate, setReceivedDate] = useState(new Date().toISOString().split("T")[0]);
+  const [receivedDate, setReceivedDate] = useState(
+    new Date().toISOString().split("T")[0],
+  );
   const [notes, setNotes] = useState("");
-  const [lines, setLines] = useState<GrnLine[]>([createEmptyLine()]);
-  const [lastScannedItem, setLastScannedItem] = useState<{ id: string; name: string; systemCount: number } | null>(null);
+  const [lines, setLines] = useState<GrnLine[]>([
+    createEmptyLine(),
+  ]);
+  const [lastScannedItem, setLastScannedItem] = useState<{
+    id: string;
+    name: string;
+    systemCount: number;
+  } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
-  const [savedGrnId, setSavedGrnId] = useState<string | null>(null);
-  const [savedGrnNumber, setSavedGrnNumber] = useState<string | null>(null);
+  const [savedGrnId, setSavedGrnId] = useState<string | null>(
+    null,
+  );
+  const [savedGrnNumber, setSavedGrnNumber] = useState<
+    string | null
+  >(null);
   const [isPosted, setIsPosted] = useState(false);
 
-  const [inventory, setInventory] = useState<InventoryItem[]>([]);
-  const [loadingInventory, setLoadingInventory] = useState(false);
+  const [inventory, setInventory] = useState<InventoryItem[]>(
+    [],
+  );
+  const [loadingInventory, setLoadingInventory] =
+    useState(false);
 
   const fetchInventory = useCallback(async () => {
     setLoadingInventory(true);
     try {
       const baseUrl = `https://${projectId}.supabase.co/rest/v1`;
-      const headers = { apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` };
+      const headers = {
+        apikey: publicAnonKey,
+        Authorization: `Bearer ${publicAnonKey}`,
+      };
 
-      const iohRes = await fetch(`${baseUrl}/inventory_on_hand?select=product_id,qty_on_hand`, { headers });
-      if (!iohRes.ok) throw new Error(`inventory_on_hand: ${iohRes.status} ${await iohRes.text()}`);
-      const onHand: { product_id: string; qty_on_hand: number }[] = await iohRes.json();
-
-      const productIds = PRODUCT_CATALOG.map((p) => p.id).join(",");
-      const prodRes = await fetch(
-        `${baseUrl}/products?select=product_id,product_uuid,sku,product_name&product_id=in.(${productIds})`,
+      const vRes = await fetch(
+        `${baseUrl}/v_products_with_inventory?select=product_id,sku,name,unit,qty_on_hand,updated_at`,
         { headers },
       );
-      if (!prodRes.ok) throw new Error(`products: ${prodRes.status} ${await prodRes.text()}`);
-      const products: any[] = await prodRes.json();
+      if (!vRes.ok)
+        throw new Error(
+          `v_products_with_inventory: ${vRes.status} ${await vRes.text()}`,
+        );
+      const rows: any[] = await vRes.json();
 
-      const catalogMap = Object.fromEntries(PRODUCT_CATALOG.map((p) => [p.id, p]));
+      const catalogMap = Object.fromEntries(
+        PRODUCT_CATALOG.map((p) => [p.id, p]),
+      );
+      const allowedIds = new Set(
+        PRODUCT_CATALOG.map((p) => p.id),
+      );
 
-      const items: InventoryItem[] = products.map((p) => {
-        const ioh = onHand.find((o) => o.product_id === p.product_uuid);
-        const qty = ioh?.qty_on_hand ?? 0;
-        const catalog = catalogMap[String(p.product_id)];
-        const status: InventoryItem["status"] = qty === 0 ? "zero" : qty < MIN_STOCK_THRESHOLD ? "low" : "normal";
-        return {
-          id: String(p.product_id),
-          sku: p.sku,
-          name: p.product_name,
-          batch: catalog?.batch ?? "—",
-          systemCount: qty,
-          status,
-          expiry: catalog?.expiry ?? "—",
-        };
-      });
+      const items: InventoryItem[] = rows
+        .filter((r) => allowedIds.has(String(r.product_id)))
+        .map((r) => {
+          const qty = Number(r.qty_on_hand ?? 0);
+          const catalog = catalogMap[String(r.product_id)];
+          const status: InventoryItem["status"] =
+            qty === 0
+              ? "zero"
+              : qty < MIN_STOCK_THRESHOLD
+                ? "low"
+                : "normal";
+
+          return {
+            id: String(r.product_id),
+            sku: r.sku ?? "N/A",
+            name: r.name ?? "Unknown Product",
+            unit: r.unit ?? "-",
+            lastUpdated: r.updated_at ?? null,
+            batch: catalog?.batch ?? "—",
+            systemCount: qty,
+            status,
+            expiry: catalog?.expiry ?? "—",
+          };
+        });
 
       setInventory(items);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg =
+        err instanceof Error ? err.message : String(err);
       console.error("fetchInventory error:", msg);
-      toast.error("Could not load inventory", { description: msg });
+      toast.error("Could not load inventory", {
+        description: msg,
+      });
     } finally {
       setLoadingInventory(false);
     }
   }, []);
 
-  useEffect(() => { fetchInventory(); }, [fetchInventory]);
+  useEffect(() => {
+    fetchInventory();
+  }, [fetchInventory]);
 
-  const insertScannedItemToLines = (item: { id: string; name: string; systemCount: number }) => {
+  const insertScannedItemToLines = (item: {
+    id: string;
+    name: string;
+    systemCount: number;
+  }) => {
     setLines((prev) => {
       if (prev.length === 1 && !prev[0].productId) {
-        return [{ ...prev[0], productId: item.id, qtyExpected: item.systemCount.toString() }];
+        return [
+          {
+            ...prev[0],
+            productId: item.id,
+            qtyExpected: item.systemCount.toString(),
+          },
+        ];
       }
-      return [...prev, { lineId: crypto.randomUUID(), productId: item.id, qtyExpected: item.systemCount.toString(), qtyReceived: "", discrepancyReason: "", otherReason: "" }];
+      return [
+        ...prev,
+        {
+          lineId: crypto.randomUUID(),
+          productId: item.id,
+          qtyExpected: item.systemCount.toString(),
+          qtyReceived: "",
+          discrepancyReason: "",
+          otherReason: "",
+        },
+      ];
     });
   };
 
   const handleScan = () => {
-    const randomCatalog = PRODUCT_CATALOG[Math.floor(Math.random() * PRODUCT_CATALOG.length)];
-    const inv = inventory.find((i) => i.id === randomCatalog.id);
-    const scanned = { id: randomCatalog.id, name: randomCatalog.name, systemCount: inv?.systemCount ?? 0 };
+    const randomCatalog =
+      PRODUCT_CATALOG[
+        Math.floor(Math.random() * PRODUCT_CATALOG.length)
+      ];
+    const inv = inventory.find(
+      (i) => i.id === randomCatalog.id,
+    );
+    const scanned = {
+      id: randomCatalog.id,
+      name: randomCatalog.name,
+      systemCount: inv?.systemCount ?? 0,
+    };
     setLastScannedItem(scanned);
     if (showGrnForm) {
       insertScannedItemToLines(scanned);
-      toast.success("Barcode Scanned", { description: `${randomCatalog.name} added to GRN line items` });
+      toast.success("Barcode Scanned", {
+        description: `${randomCatalog.name} added to GRN line items`,
+      });
       return;
     }
-    toast.success("Barcode Scanned", { description: `${randomCatalog.name} scanned. Click View GRN to continue.` });
+    toast.success("Barcode Scanned", {
+      description: `${randomCatalog.name} scanned. Click View GRN to continue.`,
+    });
   };
 
   const handleViewGrn = () => {
     setShowGrnForm(true);
-    if (lastScannedItem) { insertScannedItemToLines(lastScannedItem); setLastScannedItem(null); }
+    if (lastScannedItem) {
+      insertScannedItemToLines(lastScannedItem);
+      setLastScannedItem(null);
+    }
   };
 
-  const addLine = () => setLines((prev) => [...prev, createEmptyLine()]);
+  const addLine = () =>
+    setLines((prev) => [...prev, createEmptyLine()]);
   const removeLine = (lineId: string) => {
-    // Editing lines after save invalidates the saved draft — reset it so
-    // handlePostGrn will write a fresh draft with the correct data.
     setSavedGrnId(null);
     setSavedGrnNumber(null);
-    setLines((prev) => prev.length === 1 ? prev : prev.filter((l) => l.lineId !== lineId));
+    setLines((prev) =>
+      prev.length === 1
+        ? prev
+        : prev.filter((l) => l.lineId !== lineId),
+    );
   };
-  const updateLine = (lineId: string, field: keyof GrnLine, value: string) => {
-    // Any edit after save means the saved draft is stale — force a re-save on post.
+  const updateLine = (
+    lineId: string,
+    field: keyof GrnLine,
+    value: string,
+  ) => {
     setSavedGrnId(null);
     setSavedGrnNumber(null);
-    setLines((prev) => prev.map((l) => l.lineId === lineId ? { ...l, [field]: value } : l));
+    setLines((prev) =>
+      prev.map((l) =>
+        l.lineId === lineId ? { ...l, [field]: value } : l,
+      ),
+    );
   };
 
   const validateLines = (): boolean => {
-    if (!receivedDate) { toast.error("Missing received date"); return false; }
+    if (!receivedDate) {
+      toast.error("Missing received date");
+      return false;
+    }
 
-    // RPC requires at least one line
-    if (lines.length === 0 || (lines.length === 1 && !lines[0].productId)) {
+    if (
+      lines.length === 0 ||
+      (lines.length === 1 && !lines[0].productId)
+    ) {
       toast.error("At least one line item is required");
       return false;
     }
@@ -190,21 +338,45 @@ export function WarehouseReceiving() {
       const expected = Number(line.qtyExpected);
       const received = Number(line.qtyReceived);
 
-      if (!line.productId) { toast.error(`Line ${i + 1}: Product is required`); return false; }
-      if (line.qtyExpected === "" || !Number.isFinite(expected) || expected < 0) {
-        toast.error(`Line ${i + 1}: Qty expected must be 0 or higher`); return false;
+      if (!line.productId) {
+        toast.error(`Line ${i + 1}: Product is required`);
+        return false;
       }
-      // RPC skips lines where qty_received = 0, so require at least 1
-      if (line.qtyReceived === "" || !Number.isFinite(received) || received < 1) {
-        toast.error(`Line ${i + 1}: Qty received must be 1 or higher`); return false;
+      if (
+        line.qtyExpected === "" ||
+        !Number.isFinite(expected) ||
+        expected < 0
+      ) {
+        toast.error(
+          `Line ${i + 1}: Qty expected must be 0 or higher`,
+        );
+        return false;
+      }
+      if (
+        line.qtyReceived === "" ||
+        !Number.isFinite(received) ||
+        received < 1
+      ) {
+        toast.error(
+          `Line ${i + 1}: Qty received must be 1 or higher`,
+        );
+        return false;
       }
 
       const mismatch = expected !== received;
       if (mismatch && !line.discrepancyReason) {
-        toast.error(`Line ${i + 1}: Discrepancy reason is required`); return false;
+        toast.error(
+          `Line ${i + 1}: Discrepancy reason is required`,
+        );
+        return false;
       }
-      if (mismatch && line.discrepancyReason === "other" && !line.otherReason.trim()) {
-        toast.error(`Line ${i + 1}: Please type Other reason`); return false;
+      if (
+        mismatch &&
+        line.discrepancyReason === "other" &&
+        !line.otherReason.trim()
+      ) {
+        toast.error(`Line ${i + 1}: Please type Other reason`);
+        return false;
       }
     }
     return true;
@@ -213,7 +385,10 @@ export function WarehouseReceiving() {
   const buildPayloads = () => {
     const grnId = crypto.randomUUID();
     const dateStamp = receivedDate.replace(/-/g, "");
-    const timeStamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
+    const timeStamp = new Date()
+      .toISOString()
+      .slice(11, 19)
+      .replace(/:/g, "");
     const grnNumber = `GRN-${dateStamp}-${timeStamp}`;
 
     const headerPayload = {
@@ -226,19 +401,22 @@ export function WarehouseReceiving() {
     };
 
     const linePayload = lines.map((line, idx) => {
-      const product = PRODUCT_CATALOG.find((item) => item.id === line.productId);
+      const product = PRODUCT_CATALOG.find(
+        (item) => item.id === line.productId,
+      );
       const expected = Number(line.qtyExpected);
       const received = Number(line.qtyReceived);
       const mismatch = expected !== received;
-      // Resolve "other" to the typed free-text value before saving to DB
       const reason = mismatch
-        ? (line.discrepancyReason === "other" ? line.otherReason.trim() : line.discrepancyReason)
+        ? line.discrepancyReason === "other"
+          ? line.otherReason.trim()
+          : line.discrepancyReason
         : null;
       return {
         id: crypto.randomUUID(),
         grn_draft_id: grnId,
         line_no: idx + 1,
-        product_id: line.productId,          // text column storing integer product_id
+        product_id: line.productId,
         product_name: product?.name ?? "Unknown",
         sku: product?.sku ?? "N/A",
         qty_expected: expected,
@@ -251,44 +429,61 @@ export function WarehouseReceiving() {
     return { grnId, grnNumber, headerPayload, linePayload };
   };
 
-  const saveToDatabase = async (headerPayload: object, linePayload: object[]) => {
-    const hRes = await fetch(`https://${projectId}.supabase.co/rest/v1/grn_drafts`, {
-      method: "POST",
-      headers: {
-        apikey: publicAnonKey,
-        Authorization: `Bearer ${publicAnonKey}`,
-        "Content-Type": "application/json",
-        Prefer: "return=minimal",
+  const saveToDatabase = async (
+    headerPayload: object,
+    linePayload: object[],
+  ) => {
+    const hRes = await fetch(
+      `https://${projectId}.supabase.co/rest/v1/grn_drafts`,
+      {
+        method: "POST",
+        headers: {
+          apikey: publicAnonKey,
+          Authorization: `Bearer ${publicAnonKey}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify(headerPayload),
       },
-      body: JSON.stringify(headerPayload),
-    });
+    );
     if (!hRes.ok) throw new Error(await hRes.text());
 
-    const lRes = await fetch(`https://${projectId}.supabase.co/rest/v1/grn_draft_lines`, {
-      method: "POST",
-      headers: {
-        apikey: publicAnonKey,
-        Authorization: `Bearer ${publicAnonKey}`,
-        "Content-Type": "application/json",
-        Prefer: "return=minimal",
+    const lRes = await fetch(
+      `https://${projectId}.supabase.co/rest/v1/grn_draft_lines`,
+      {
+        method: "POST",
+        headers: {
+          apikey: publicAnonKey,
+          Authorization: `Bearer ${publicAnonKey}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify(linePayload),
       },
-      body: JSON.stringify(linePayload),
-    });
+    );
     if (!lRes.ok) throw new Error(await lRes.text());
   };
 
   const handleSaveGrn = async () => {
     if (!validateLines()) return;
-    const { grnId, grnNumber, headerPayload, linePayload } = buildPayloads();
+    const { grnId, grnNumber, headerPayload, linePayload } =
+      buildPayloads();
     setIsSaving(true);
     try {
       await saveToDatabase(headerPayload, linePayload);
       setSavedGrnId(grnId);
       setSavedGrnNumber(grnNumber);
       setIsPosted(false);
-      toast.success(`GRN ${grnNumber} saved`, { description: `${linePayload.length} line item(s) recorded` });
+      toast.success(`GRN ${grnNumber} saved`, {
+        description: `${linePayload.length} line item(s) recorded`,
+      });
     } catch (error) {
-      toast.error("Save failed", { description: error instanceof Error ? error.message : "Unknown error" });
+      toast.error("Save failed", {
+        description:
+          error instanceof Error
+            ? error.message
+            : "Unknown error",
+      });
     } finally {
       setIsSaving(false);
     }
@@ -301,8 +496,6 @@ export function WarehouseReceiving() {
       let grnId = savedGrnId;
       let grnNumber = savedGrnNumber;
 
-      // Always write a fresh draft if there's no saved ID (first post or lines
-      // were edited after the last save, which clears savedGrnId).
       if (!grnId) {
         const p = buildPayloads();
         grnId = p.grnId;
@@ -310,8 +503,10 @@ export function WarehouseReceiving() {
         await saveToDatabase(p.headerPayload, p.linePayload);
       }
 
-      // Call the RPC — post_grn_draft handles inventory_on_hand + inventory_movements
-      const result = await postGRN(grnId!, "warehouse_operator");
+      const result = await postGRN(
+        grnId!,
+        "warehouse_operator",
+      );
 
       setIsPosted(true);
       setSavedGrnId(grnId);
@@ -321,11 +516,9 @@ export function WarehouseReceiving() {
         description: `${result.lines_processed} line(s) · ${result.products_updated} product(s) updated`,
       });
 
-      // Refresh stock display after a short delay so the DB write settles
       await new Promise((r) => setTimeout(r, 600));
       await fetchInventory();
 
-      // Reset the form after giving the user time to see the success state
       setTimeout(() => {
         setReceivedDate(new Date().toISOString().split("T")[0]);
         setNotes("");
@@ -338,7 +531,10 @@ export function WarehouseReceiving() {
     } catch (error) {
       console.error("handlePostGrn error:", error);
       toast.error("Post failed", {
-        description: error instanceof Error ? error.message : String(error),
+        description:
+          error instanceof Error
+            ? error.message
+            : String(error),
       });
     } finally {
       setIsPosting(false);
@@ -348,16 +544,27 @@ export function WarehouseReceiving() {
   return (
     <div className="p-4 space-y-6 bg-white pb-24 lg:pb-8">
       <div>
-        <h1 className="text-2xl lg:text-4xl font-semibold mb-2 text-[#111827]">Warehouse Receiving & GRN</h1>
-        <p className="text-sm lg:text-base text-[#6B7280]">Scan barcode and process GRN lines</p>
+        <h1 className="text-2xl lg:text-4xl font-semibold mb-2 text-[#111827]">
+          Warehouse Receiving & GRN
+        </h1>
+        <p className="text-sm lg:text-base text-[#6B7280]">
+          Scan barcode and process GRN lines
+        </p>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <Button onClick={handleScan} className="h-20 bg-[#00A3AD] hover:bg-[#0891B2] text-white flex flex-col gap-2 shadow-md">
+        <Button
+          onClick={handleScan}
+          className="h-20 bg-[#00A3AD] hover:bg-[#0891B2] text-white flex flex-col gap-2 shadow-md"
+        >
           <ScanBarcode className="w-8 h-8" />
           <span className="font-semibold">Scan Barcode</span>
         </Button>
-        <Button onClick={handleViewGrn} variant="outline" className="h-20 border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10 flex flex-col gap-2">
+        <Button
+          onClick={handleViewGrn}
+          variant="outline"
+          className="h-20 border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10 flex flex-col gap-2"
+        >
           <Package className="w-8 h-8" />
           <span className="font-semibold">View GRN</span>
         </Button>
@@ -366,21 +573,47 @@ export function WarehouseReceiving() {
       {showGrnForm && (
         <>
           <Card className="bg-white border-[#111827]/10 shadow-lg">
-            <CardHeader><CardTitle className="text-[#111827] font-semibold">GRN Header</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="text-[#111827] font-semibold">
+                GRN Header
+              </CardTitle>
+            </CardHeader>
             <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <Label className="text-[#6B7280]">Received Date</Label>
-                <Input type="date" value={receivedDate} onChange={(e) => setReceivedDate(e.target.value)} className="mt-2 border-[#111827]/10" disabled={isPosted} />
+                <Label className="text-[#6B7280]">
+                  Received Date
+                </Label>
+                <Input
+                  type="date"
+                  value={receivedDate}
+                  onChange={(e) =>
+                    setReceivedDate(e.target.value)
+                  }
+                  className="mt-2 border-[#111827]/10"
+                  disabled={isPosted}
+                />
               </div>
               <div>
-                <Label className="text-[#6B7280]">Notes (Optional)</Label>
-                <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Supplier delivery note, issue summary, etc." className="mt-2 border-[#111827]/10" disabled={isPosted} />
+                <Label className="text-[#6B7280]">
+                  Notes (Optional)
+                </Label>
+                <Input
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Supplier delivery note, issue summary, etc."
+                  className="mt-2 border-[#111827]/10"
+                  disabled={isPosted}
+                />
               </div>
             </CardContent>
           </Card>
 
           <Card className="bg-white border-[#111827]/10 shadow-lg">
-            <CardHeader><CardTitle className="text-[#111827] font-semibold">Line Items</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="text-[#111827] font-semibold">
+                Line Items
+              </CardTitle>
+            </CardHeader>
             <CardContent className="space-y-4">
               {lines.map((line, index) => {
                 const expected = Number(line.qtyExpected);
@@ -392,111 +625,267 @@ export function WarehouseReceiving() {
                   line.qtyReceived !== "" &&
                   expected !== received;
                 return (
-                  <div key={line.lineId} className="border border-[#E5E7EB] rounded-lg p-4 space-y-4 bg-[#F8FAFC]">
+                  <div
+                    key={line.lineId}
+                    className="border border-[#E5E7EB] rounded-lg p-4 space-y-4 bg-[#F8FAFC]"
+                  >
                     <div className="flex items-center justify-between">
-                      <p className="text-sm font-semibold text-[#111827]">Line {index + 1}</p>
+                      <p className="text-sm font-semibold text-[#111827]">
+                        Line {index + 1}
+                      </p>
                       <Button
                         type="button"
                         variant="outline"
                         className="border-[#DC2626] text-[#DC2626] hover:bg-[#DC2626]/10"
                         onClick={() => removeLine(line.lineId)}
-                        disabled={lines.length === 1 || isPosted}
+                        disabled={
+                          lines.length === 1 || isPosted
+                        }
                       >
-                        <Trash2 className="w-4 h-4 mr-2" />Remove
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        Remove
                       </Button>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
-                        <Label className="text-[#6B7280]">Product</Label>
-                        <Select value={line.productId} onValueChange={(v) => updateLine(line.lineId, "productId", v)} disabled={isPosted}>
-                          <SelectTrigger className="mt-2 border-[#111827]/10 bg-white"><SelectValue placeholder="Select product" /></SelectTrigger>
+                        <Label className="text-[#6B7280]">
+                          Product
+                        </Label>
+                        <Select
+                          value={line.productId}
+                          onValueChange={(v) =>
+                            updateLine(
+                              line.lineId,
+                              "productId",
+                              v,
+                            )
+                          }
+                          disabled={isPosted}
+                        >
+                          <SelectTrigger className="mt-2 border-[#111827]/10 bg-white">
+                            <SelectValue placeholder="Select product" />
+                          </SelectTrigger>
                           <SelectContent>
                             {PRODUCT_CATALOG.map((item) => (
-                              <SelectItem key={item.id} value={item.id}>{item.name} ({item.sku})</SelectItem>
+                              <SelectItem
+                                key={item.id}
+                                value={item.id}
+                              >
+                                {item.name} ({item.sku})
+                              </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                       </div>
                       <div>
-                        <Label className="text-[#6B7280]">Qty Expected</Label>
-                        <Input type="number" min="0" value={line.qtyExpected} onChange={(e) => updateLine(line.lineId, "qtyExpected", e.target.value)} className="mt-2 border-[#111827]/10 bg-white" placeholder="0" disabled={isPosted} />
+                        <Label className="text-[#6B7280]">
+                          Qty Expected
+                        </Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          value={line.qtyExpected}
+                          onChange={(e) =>
+                            updateLine(
+                              line.lineId,
+                              "qtyExpected",
+                              e.target.value,
+                            )
+                          }
+                          className="mt-2 border-[#111827]/10 bg-white"
+                          placeholder="0"
+                          disabled={isPosted}
+                        />
                       </div>
                       <div>
-                        <Label className="text-[#6B7280]">Qty Received</Label>
-                        <Input type="number" min="1" value={line.qtyReceived} onChange={(e) => updateLine(line.lineId, "qtyReceived", e.target.value)} className="mt-2 border-[#111827]/10 bg-white" placeholder="0" disabled={isPosted} />
+                        <Label className="text-[#6B7280]">
+                          Qty Received
+                        </Label>
+                        <Input
+                          type="number"
+                          min="1"
+                          value={line.qtyReceived}
+                          onChange={(e) =>
+                            updateLine(
+                              line.lineId,
+                              "qtyReceived",
+                              e.target.value,
+                            )
+                          }
+                          className="mt-2 border-[#111827]/10 bg-white"
+                          placeholder="0"
+                          disabled={isPosted}
+                        />
                       </div>
                       <div>
-                        <Label className="text-[#6B7280]">Discrepancy Reason {mismatch ? "(Required)" : "(Optional)"}</Label>
-                        <Select value={line.discrepancyReason} onValueChange={(v) => updateLine(line.lineId, "discrepancyReason", v)} disabled={isPosted}>
-                          <SelectTrigger className="mt-2 border-[#111827]/10 bg-white"><SelectValue placeholder="Select reason" /></SelectTrigger>
+                        <Label className="text-[#6B7280]">
+                          Discrepancy Reason{" "}
+                          {mismatch
+                            ? "(Required)"
+                            : "(Optional)"}
+                        </Label>
+                        <Select
+                          value={line.discrepancyReason}
+                          onValueChange={(v) =>
+                            updateLine(
+                              line.lineId,
+                              "discrepancyReason",
+                              v,
+                            )
+                          }
+                          disabled={isPosted}
+                        >
+                          <SelectTrigger className="mt-2 border-[#111827]/10 bg-white">
+                            <SelectValue placeholder="Select reason" />
+                          </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="damaged">Damaged in Transit</SelectItem>
-                            <SelectItem value="shortage">Supplier Shortage</SelectItem>
-                            <SelectItem value="count_error">Count Error</SelectItem>
-                            <SelectItem value="expired">Expired Items</SelectItem>
-                            <SelectItem value="other">Other</SelectItem>
+                            <SelectItem value="damaged">
+                              Damaged in Transit
+                            </SelectItem>
+                            <SelectItem value="shortage">
+                              Supplier Shortage
+                            </SelectItem>
+                            <SelectItem value="count_error">
+                              Count Error
+                            </SelectItem>
+                            <SelectItem value="expired">
+                              Expired Items
+                            </SelectItem>
+                            <SelectItem value="other">
+                              Other
+                            </SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
                     </div>
-                    {mismatch && line.discrepancyReason === "other" && (
-                      <div>
-                        <Label className="text-[#6B7280]">Type Other Reason</Label>
-                        <Input value={line.otherReason} onChange={(e) => updateLine(line.lineId, "otherReason", e.target.value)} className="mt-2 border-[#111827]/10 bg-white" placeholder="Enter reason" disabled={isPosted} />
-                      </div>
-                    )}
+                    {mismatch &&
+                      line.discrepancyReason === "other" && (
+                        <div>
+                          <Label className="text-[#6B7280]">
+                            Type Other Reason
+                          </Label>
+                          <Input
+                            value={line.otherReason}
+                            onChange={(e) =>
+                              updateLine(
+                                line.lineId,
+                                "otherReason",
+                                e.target.value,
+                              )
+                            }
+                            className="mt-2 border-[#111827]/10 bg-white"
+                            placeholder="Enter reason"
+                            disabled={isPosted}
+                          />
+                        </div>
+                      )}
                   </div>
                 );
               })}
-              <Button onClick={addLine} variant="outline" className="w-full border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10" disabled={isPosted}>
-                <Plus className="w-4 h-4 mr-2" />Add Line Item
+              <Button
+                onClick={addLine}
+                variant="outline"
+                className="w-full border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"
+                disabled={isPosted}
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Add Line Item
               </Button>
             </CardContent>
           </Card>
         </>
       )}
 
-      {/* Live Stock-on-Hand */}
       <Card className="bg-white border-[#111827]/10 shadow-sm">
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-[#111827] font-semibold">Stock-on-Hand</CardTitle>
-              <p className="text-sm text-[#6B7280]">Current inventory levels</p>
+              <CardTitle className="text-[#111827] font-semibold">
+                Stock-on-Hand
+              </CardTitle>
+              <p className="text-sm text-[#6B7280]">
+                Current inventory levels
+              </p>
             </div>
-            <Button variant="outline" size="sm" onClick={fetchInventory} disabled={loadingInventory} className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10">
-              <RefreshCw className={`w-4 h-4 mr-1 ${loadingInventory ? "animate-spin" : ""}`} />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={fetchInventory}
+              disabled={loadingInventory}
+              className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"
+            >
+              <RefreshCw
+                className={`w-4 h-4 mr-1 ${loadingInventory ? "animate-spin" : ""}`}
+              />
               Refresh
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent>
           {loadingInventory && inventory.length === 0 ? (
-            <p className="text-sm text-[#6B7280] text-center py-4">Loading inventory...</p>
+            <p className="text-sm text-[#6B7280] text-center py-4">
+              Loading inventory...
+            </p>
           ) : inventory.length === 0 ? (
-            <p className="text-sm text-[#6B7280] text-center py-4">No inventory data found.</p>
+            <p className="text-sm text-[#6B7280] text-center py-4">
+              No inventory data found.
+            </p>
           ) : (
-            inventory.map((item) => (
-              <div key={item.id} className={`p-4 rounded-lg border-2 transition-all ${item.status === "zero" || item.status === "low" ? "border-[#F97316] bg-[#F97316]/5 shadow-sm" : "border-[#E5E7EB] hover:border-[#00A3AD]"}`}>
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <div className="font-semibold text-[#111827] mb-1">{item.name}</div>
-                    <div className="text-sm text-[#6B7280]">SKU: {item.sku} | Batch: {item.batch}</div>
-                  </div>
-                  {(item.status === "zero" || item.status === "low") && (
-                    <span className="px-3 py-1 bg-[#F97316] text-white text-xs rounded-full whitespace-nowrap font-medium">
-                      {item.status === "zero" ? "Out of Stock" : "Restock"}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="text-2xl font-bold" style={{ color: item.status === "zero" ? "#F97316" : "#111827" }}>
-                    {item.systemCount.toLocaleString()}
-                  </div>
-                  <div className="text-sm text-[#6B7280] font-medium">Exp: {item.expiry}</div>
-                </div>
-              </div>
-            ))
+            <div className="overflow-x-auto rounded-lg border border-[#E5E7EB]">
+              <table className="w-full min-w-[780px] text-sm">
+                <thead>
+                  <tr className="bg-[#F8FAFC] border-b border-[#E5E7EB]">
+                    <th className="text-left py-3 px-4 font-semibold text-[#111827]">
+                      SKU
+                    </th>
+                    <th className="text-left py-3 px-4 font-semibold text-[#111827]">
+                      Product Name
+                    </th>
+                    <th className="text-left py-3 px-4 font-semibold text-[#111827]">
+                      Unit
+                    </th>
+                    <th className="text-left py-3 px-4 font-semibold text-[#111827]">
+                      Qty on-hand
+                    </th>
+                    <th className="text-left py-3 px-4 font-semibold text-[#111827]">
+                      Last Updated
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {inventory.map((item) => (
+                    <tr
+                      key={item.id}
+                      className="border-b border-[#E5E7EB] last:border-b-0"
+                    >
+                      <td className="py-3 px-4 font-mono text-[#00A3AD]">
+                        {item.sku}
+                      </td>
+                      <td className="py-3 px-4 font-medium text-[#111827]">
+                        {item.name}
+                      </td>
+                      <td className="py-3 px-4 text-[#111827]">
+                        {item.unit || "-"}
+                      </td>
+                      <td className="py-3 px-4">
+                        <span
+                          className={`font-semibold ${item.status === "zero" ? "text-[#F97316]" : "text-[#111827]"}`}
+                        >
+                          {item.systemCount.toLocaleString()}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-[#6B7280]">
+                        {item.lastUpdated
+                          ? new Date(
+                              item.lastUpdated,
+                            ).toLocaleString()
+                          : "-"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -511,11 +900,20 @@ export function WarehouseReceiving() {
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-2">
-                <Button onClick={handleSaveGrn} disabled={isSaving || isPosting} variant="outline" className="h-14 border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10 font-semibold disabled:opacity-50">
+                <Button
+                  onClick={handleSaveGrn}
+                  disabled={isSaving || isPosting}
+                  variant="outline"
+                  className="h-14 border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10 font-semibold disabled:opacity-50"
+                >
                   <CheckCircle className="w-5 h-5 mr-2" />
                   {isSaving ? "Saving..." : "Save GRN"}
                 </Button>
-                <Button onClick={handlePostGrn} disabled={isSaving || isPosting} className="h-14 bg-[#059669] hover:bg-[#047857] text-white shadow-lg font-semibold disabled:opacity-50">
+                <Button
+                  onClick={handlePostGrn}
+                  disabled={isSaving || isPosting}
+                  className="h-14 bg-[#059669] hover:bg-[#047857] text-white shadow-lg font-semibold disabled:opacity-50"
+                >
                   <SendHorizonal className="w-5 h-5 mr-2" />
                   {isPosting ? "Posting..." : "Post GRN"}
                 </Button>
@@ -523,7 +921,8 @@ export function WarehouseReceiving() {
             )}
             {!isPosted && savedGrnId && (
               <p className="text-xs text-center text-[#6B7280]">
-                GRN saved as draft — click <strong>Post GRN</strong> to update inventory
+                GRN saved as draft — click{" "}
+                <strong>Post GRN</strong> to update inventory
               </p>
             )}
           </div>
