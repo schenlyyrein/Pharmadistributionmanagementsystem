@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ScanBarcode,
   CheckCircle,
@@ -113,19 +113,63 @@ export function WarehouseReceiving() {
   const [lastScannedItem, setLastScannedItem] =
     useState<InventoryItem | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [inventoryItems, setInventoryItems] =
+    useState<InventoryItem[]>(mockInventory);
+
+  const loadInventory = async () => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/rest/v1/v_products_with_inventory?select=product_id,sku,name,unit,qty_on_hand`,
+        {
+          method: "GET",
+          headers: {
+            apikey: publicAnonKey,
+            Authorization: `Bearer ${publicAnonKey}`,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+
+      if (!response.ok) return;
+      const rows = await response.json();
+      const mapped: InventoryItem[] = (rows || []).map(
+        (p: any) => {
+          const qty = Number(p.qty_on_hand ?? 0);
+          return {
+            id: p.product_id?.toString() || crypto.randomUUID(),
+            sku: p.sku || "N/A",
+            name: p.name || "Unknown Product",
+            batch: "N/A",
+            systemCount: qty,
+            status:
+              qty <= 0 ? "zero" : qty < 500 ? "low" : "normal",
+            expiry: "N/A",
+          };
+        },
+      );
+
+      if (mapped.length > 0) setInventoryItems(mapped);
+    } catch {
+      // Keep mock inventory when live fetch fails.
+    }
+  };
+
+  useEffect(() => {
+    loadInventory();
+  }, []);
 
   const hasDiscrepancy = lines.some((line) => {
-  const expected = Number(line.qtyExpected);
-  const received = Number(line.qtyReceived);
+    const expected = Number(line.qtyExpected);
+    const received = Number(line.qtyReceived);
 
-  return (
-    Number.isFinite(expected) &&
-    Number.isFinite(received) &&
-    line.qtyExpected !== "" &&
-    line.qtyReceived !== "" &&
-    expected !== received
-  );
-});
+    return (
+      Number.isFinite(expected) &&
+      Number.isFinite(received) &&
+      line.qtyExpected !== "" &&
+      line.qtyReceived !== "" &&
+      expected !== received
+    );
+  });
 
   const insertScannedItemToLines = (item: InventoryItem) => {
     setLines((prev) => {
@@ -154,9 +198,13 @@ export function WarehouseReceiving() {
   };
 
   const handleScan = () => {
+    if (inventoryItems.length === 0) {
+      toast.error("No inventory items found");
+      return;
+    }
     const randomItem =
-      mockInventory[
-        Math.floor(Math.random() * mockInventory.length)
+      inventoryItems[
+        Math.floor(Math.random() * inventoryItems.length)
       ];
     setLastScannedItem(randomItem);
 
@@ -269,10 +317,14 @@ export function WarehouseReceiving() {
     const grnNumber = `GRN-${dateStamp}-${timeStamp}`;
 
     const hasDiscrepancy = lines.some((line) => {
-    const expected = Number(line.qtyExpected)
-    const received = Number(line.qtyReceived)
-    return Number.isFinite(expected) && Number.isFinite(received) && expected !== received
-})
+      const expected = Number(line.qtyExpected);
+      const received = Number(line.qtyReceived);
+      return (
+        Number.isFinite(expected) &&
+        Number.isFinite(received) &&
+        expected !== received
+      );
+    });
 
     const headerPayload = {
       id: grnId,
@@ -285,7 +337,7 @@ export function WarehouseReceiving() {
     };
 
     const linePayload = lines.map((line, idx) => {
-      const product = mockInventory.find(
+      const product = inventoryItems.find(
         (item) => item.id === line.productId,
       );
       const expected = Number(line.qtyExpected);
@@ -346,8 +398,10 @@ export function WarehouseReceiving() {
 
       if (!linesRes.ok) throw new Error(await linesRes.text());
 
+      await loadInventory();
+
       toast.success(`GRN ${grnNumber} saved`, {
-        description: `${linePayload.length} line item(s) recorded`,
+        description: `${linePayload.length} line item(s) recorded and inventory synced`,
       });
 
       setReceivedDate(new Date().toISOString().split("T")[0]);
@@ -395,17 +449,16 @@ export function WarehouseReceiving() {
 
       {showGrnForm && (
         <>
-
           {hasDiscrepancy && (
-  <div className="inline-flex items-center px-3 py-1 rounded-full bg-[#F97316] text-white text-xs font-semibold">
-    Discrepancy detected
-  </div>
-)}
+            <div className="inline-flex items-center px-3 py-1 rounded-full bg-[#F97316] text-white text-xs font-semibold">
+              Discrepancy detected
+            </div>
+          )}
           {hasDiscrepancy && (
-  <div className="mb-4 px-3 py-2 rounded-md bg-[#F97316] text-white font-semibold">
-    Discrepancy detected
-  </div>
-)}
+            <div className="mb-4 px-3 py-2 rounded-md bg-[#F97316] text-white font-semibold">
+              Discrepancy detected
+            </div>
+          )}
           <Card className="bg-white border-[#111827]/10 shadow-lg">
             <CardHeader>
               <CardTitle className="text-[#111827] font-semibold">
@@ -497,7 +550,7 @@ export function WarehouseReceiving() {
                             <SelectValue placeholder="Select product" />
                           </SelectTrigger>
                           <SelectContent>
-                            {mockInventory.map((item) => (
+                            {inventoryItems.map((item) => (
                               <SelectItem
                                 key={item.id}
                                 value={item.id}
@@ -637,7 +690,7 @@ export function WarehouseReceiving() {
           </p>
         </CardHeader>
         <CardContent className="space-y-3">
-          {mockInventory.map((item) => (
+          {inventoryItems.map((item) => (
             <div
               key={item.id}
               className={`p-4 rounded-lg border-2 transition-all ${

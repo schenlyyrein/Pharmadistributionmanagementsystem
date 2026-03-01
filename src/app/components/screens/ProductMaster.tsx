@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   Plus,
   Search,
-  Filter,
   Download,
   Upload,
   Barcode,
@@ -33,13 +32,16 @@ import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 interface Product {
   id: string;
+  product_uuid?: string;
   sku: string;
   name: string;
+  unit?: string;
   category_id: string;
+  category_text?: string;
   barcode: string;
   supplier: string;
-  minStock: number;
   currentStock: number;
+  inventoryUpdatedAt?: string | null;
   unitPrice: number;
   location: string;
   createdAt?: string;
@@ -79,84 +81,19 @@ const buildCategoryOptions = (rows: ProductCategory[]): CategoryOption[] => {
     .sort((a, b) => a.label.localeCompare(b.label))
 }
 
-const getDescendantIds = (all: ProductCategory[], parentId: string) => {
-  const childrenByParent = new Map<string, string[]>()
-  all.forEach(c => {
-    if (!c.parent_id) return
-    const arr = childrenByParent.get(c.parent_id) || []
-    arr.push(c.id)
-    childrenByParent.set(c.parent_id, arr)
-  })
-
-  const result = new Set<string>()
-  const stack = [parentId]
-  while (stack.length) {
-    const id = stack.pop()!
-    result.add(id)
-    const kids = childrenByParent.get(id) || []
-    kids.forEach(k => stack.push(k))
-  }
-  return Array.from(result)
-}
-
-const mockProducts: Product[] = [
-  {
-    id: "1",
-    sku: "AMX-500",
-    name: "Amoxicillin 500mg",
-    category_id: "pharma",
-    barcode: "4987654321098",
-    supplier: "Takeda Pharmaceutical",
-    minStock: 1000,
-    currentStock: 12500,
-    unitPrice: 50,
-    location: "Zone A-01"
-  },
-  {
-    id: "2",
-    sku: "PAR-500",
-    name: "Paracetamol 500mg",
-    category_id: "pharma",
-    barcode: "4987654321105",
-    supplier: "Astellas Pharma",
-    minStock: 1500,
-    currentStock: 18200,
-    unitPrice: 20,
-    location: "Zone A-02"
-  },
-  {
-    id: "3",
-    sku: "SYR-50ML",
-    name: "Medical Syringe 50ml (Sterile)",
-    category_id: "medical_supplies",
-    barcode: "4987654321112",
-    supplier: "Terumo Corporation",
-    minStock: 500,
-    currentStock: 2400,
-    unitPrice: 15,
-    location: "Zone B-05"
-  },
-  {
-    id: "4",
-    sku: "VAC-COVID",
-    name: "COVID-19 Vaccine (Pfizer)",
-    category_id: "cold_chain",
-    barcode: "4987654321129",
-    supplier: "Pfizer Japan",
-    minStock: 100,
-    currentStock: 450,
-    unitPrice: 2500,
-    location: "Cold Storage CS-01"
-  },
-];
-
 export function ProductMaster() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [parentCategoryFilter, setParentCategoryFilter] = useState<string>("all");
+  const [childCategoryFilter, setChildCategoryFilter] = useState<string>("all");
   const [locationFilter, setLocationFilter] = useState<string>("all");
   const [showNewProductDialog, setShowNewProductDialog] = useState(false);
-  const [products, setProducts] = useState<Product[]>(mockProducts);
+  const [showViewDialog, setShowViewDialog] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [products, setProducts] = useState<Product[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [debugLogs, setDebugLogs] = useState<any[]>([]);
@@ -166,17 +103,24 @@ export function ProductMaster() {
   const [categories, setCategories] = useState<ProductCategory[]>([])
   const [selectedParentCategoryId, setSelectedParentCategoryId] = useState<string>("")
   const [selectedChildCategoryId, setSelectedChildCategoryId] = useState<string>("")
-  const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([])
-
-  
   const [formData, setFormData] = useState({
     productName: "",
     category_id: "",
+    unit: "",
     barcode: "",
     supplier: "",
     location: "",
-    minStock: "",
     unitPrice: "",
+    currentStock: "0"
+  });
+  const [editFormData, setEditFormData] = useState({
+    productName: "",
+    category_id: "",
+    unit: "",
+    barcode: "",
+    supplier: "",
+    location: "",
+    unitPrice: "0",
     currentStock: "0"
   });
 
@@ -191,50 +135,69 @@ export function ProductMaster() {
     console.log(`[${type}]`, message, data || "");
   };
 
-  useEffect(() => {
-    const apiUrl = `https://${projectId}.supabase.co/rest/v1/products?select=*`;
-    const loadProducts = async () => {
-      try {
-        addDebugLog("info", "Loading products from shared database");
-        const response = await fetch(apiUrl, {
-          method: "GET",
-          headers: {
-            apikey: publicAnonKey,
-            Authorization: `Bearer ${publicAnonKey}`,
-            "Content-Type": "application/json"
-          }
-        });
+  const loadProducts = async () => {
+    const productsUrl = `https://${projectId}.supabase.co/rest/v1/products?select=product_id,product_uuid,sku,product_name,unit,category,category_id,barcode,supplier,warehouse_location,unit_price,inventory_on_hand,created_at`;
+    const inventoryUrl = `https://${projectId}.supabase.co/rest/v1/v_products_with_inventory?select=product_id,qty_on_hand,updated_at`;
 
-        if (!response.ok) {
-          const text = await response.text();
-          addDebugLog("error", `Product load failed (${response.status})`, text);
-          return;
-        }
+    try {
+      addDebugLog("info", "Loading products + inventory from shared database");
+      const headers = {
+        apikey: publicAnonKey,
+        Authorization: `Bearer ${publicAnonKey}`,
+        "Content-Type": "application/json"
+      };
 
-        const fetchedProducts = await response.json();
-        const mappedProducts: Product[] = (fetchedProducts || []).map((p: any) => ({
-          id: p.id?.toString() || Date.now().toString(),
+      const [productsRes, inventoryRes] = await Promise.all([
+        fetch(productsUrl, { method: "GET", headers }),
+        fetch(inventoryUrl, { method: "GET", headers })
+      ]);
+
+      if (!productsRes.ok) {
+        const text = await productsRes.text();
+        addDebugLog("error", `Product load failed (${productsRes.status})`, text);
+        return;
+      }
+
+      const productRows = await productsRes.json();
+      const inventoryRows = inventoryRes.ok ? await inventoryRes.json() : [];
+      const inventoryByProductId = new Map<string, { qty_on_hand: number; updated_at: string | null }>(
+        (inventoryRows || []).map((r: any) => [
+          String(r.product_id),
+          {
+            qty_on_hand: Number(r.qty_on_hand ?? 0),
+            updated_at: r.updated_at || null,
+          },
+        ])
+      );
+
+      const mappedProducts: Product[] = (productRows || []).map((p: any) => {
+        const inventory = inventoryByProductId.get(String(p.product_id));
+        return {
+          id: p.product_id?.toString() || Date.now().toString(),
+          product_uuid: p.product_uuid || "",
           sku: p.sku || "",
-          name: p.product_name || p.name || "",
-          category_id: (p.category || "Pharma") as Product["category_id"],
+          name: p.product_name || "",
+          category_id: (p.category_id || p.category || "uncategorized") as string,
+          category_text: p.category || "",
           barcode: p.barcode || "",
           supplier: p.supplier || "",
-          minStock: p.min_stock_level || 0,
-          currentStock: p.current_stock || 0,
+          unit: p.unit || "",
+          currentStock: inventory?.qty_on_hand ?? p.inventory_on_hand ?? 0,
+          inventoryUpdatedAt: inventory?.updated_at || null,
           unitPrice: p.unit_price || 0,
           location: p.warehouse_location || "",
           createdAt: p.created_at || null
-        }));
+        };
+      });
 
-        if (mappedProducts.length > 0) {
-          setProducts(mappedProducts);
-          addDebugLog("success", `Loaded ${mappedProducts.length} products from database`);
-        }
-      } catch (error) {
-        addDebugLog("error", "Failed initial product load", error);
-      }
-    };
+      setProducts(mappedProducts);
+      addDebugLog("success", `Loaded ${mappedProducts.length} products from database`);
+    } catch (error) {
+      addDebugLog("error", "Failed product/inventory load", error);
+    }
+  };
 
+  useEffect(() => {
     loadProducts();
   }, []);
 
@@ -261,9 +224,6 @@ export function ProductMaster() {
         const fetchedCategories = await response.json();
         setCategories(fetchedCategories);
         
-        const options = buildCategoryOptions(fetchedCategories);
-        setCategoryOptions(options);
-        
         addDebugLog("success", `Loaded ${fetchedCategories.length} categories with hierarchy`);
       } catch (error) {
         addDebugLog("error", "Failed to load categories", error);
@@ -273,14 +233,31 @@ export function ProductMaster() {
     loadCategories();
   }, []);
 
+  const categoriesById = useMemo(() => {
+    return new Map(categories.map((c) => [c.id, c]));
+  }, [categories]);
+
+  const getProductCategoryLineage = (categoryId: string) => {
+    const category = categoriesById.get(categoryId);
+    if (!category) {
+      return { parentId: "", childId: "" };
+    }
+    if (!category.parent_id) {
+      return { parentId: category.id, childId: "" };
+    }
+    return { parentId: category.parent_id, childId: category.id };
+  };
+
   const filteredProducts = useMemo(() => {
     const filtered = products.filter((product) => {
       const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            product.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            product.barcode.includes(searchTerm);
-      const matchesCategory = categoryFilter === "all" || product.category_id === categoryFilter;
-      const matchesLocation = locationFilter === "all" || product.location.includes(locationFilter);
-      return matchesSearch && matchesCategory && matchesLocation;
+      const { parentId, childId } = getProductCategoryLineage(product.category_id);
+      const matchesParent = parentCategoryFilter === "all" || parentId === parentCategoryFilter || product.category_id === parentCategoryFilter;
+      const matchesChild = childCategoryFilter === "all" || childId === childCategoryFilter || product.category_id === childCategoryFilter;
+      const matchesLocation = locationFilter === "all" || product.location === locationFilter;
+      return matchesSearch && matchesParent && matchesChild && matchesLocation;
     });
 
     return [...filtered].sort((a, b) => {
@@ -289,7 +266,7 @@ export function ProductMaster() {
       }
       return a.name.localeCompare(b.name);
     });
-  }, [products, searchTerm, categoryFilter, locationFilter]);
+  }, [products, searchTerm, parentCategoryFilter, childCategoryFilter, locationFilter, categoriesById]);
 
   const parentCategories = useMemo(
   () => categories.filter(c => !c.parent_id),
@@ -301,10 +278,21 @@ const childCategories = useMemo(() => {
   return categories.filter(c => c.parent_id === selectedParentCategoryId)
 }, [categories, selectedParentCategoryId])
 
+const filterChildCategories = useMemo(() => {
+  if (parentCategoryFilter === "all") return []
+  return categories.filter(c => c.parent_id === parentCategoryFilter)
+}, [categories, parentCategoryFilter])
+
 const categoryLabelById = useMemo(() => {
   const options = buildCategoryOptions(categories)
   return new Map(options.map(o => [o.id, o.label]))
 }, [categories])
+
+const locationOptions = useMemo(() => {
+  return Array.from(new Set(products.map((p) => p.location).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+}, [products]);
+
+const unitOptions = ["bottle", "box", "pcs"] as const;
 
   const getCategoryColor = (category: string) => {
     switch (category) {
@@ -322,9 +310,283 @@ const categoryLabelById = useMemo(() => {
     return `${prefix}-${categoryCode}-${random}`;
   };
 
+  const parseCsvLine = (line: string) => {
+    const values: string[] = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i += 1) {
+      const char = line[i];
+      if (char === "\"") {
+        if (inQuotes && line[i + 1] === "\"") {
+          current += "\"";
+          i += 1;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === "," && !inQuotes) {
+        values.push(current.trim());
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    values.push(current.trim());
+    return values.map((v) => v.replace(/^"|"$/g, ""));
+  };
+
+  const toCsvCell = (value: unknown) => {
+    const str = String(value ?? "");
+    if (str.includes(",") || str.includes("\"") || str.includes("\n")) {
+      return `"${str.replace(/"/g, "\"\"")}"`;
+    }
+    return str;
+  };
+
+  const handleExportCsv = () => {
+    const headers = ["sku", "product_name", "category_id", "barcode", "supplier", "warehouse_location", "unit_price", "inventory_on_hand", "unit"];
+    const rows = filteredProducts.map((p) => [
+      p.sku,
+      p.name,
+      p.category_id,
+      p.barcode,
+      p.supplier,
+      p.location,
+      p.unitPrice,
+      p.currentStock,
+      p.unit || "",
+    ]);
+
+    const csv = [
+      headers.join(","),
+      ...rows.map((row) => row.map(toCsvCell).join(",")),
+    ].join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `product_master_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success("CSV exported", { description: `${filteredProducts.length} product(s) exported` });
+  };
+
+  const handleImportCsv = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const lines = text
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+      if (lines.length < 2) {
+        toast.error("CSV is empty");
+        return;
+      }
+
+      const headers = parseCsvLine(lines[0]).map((h) => h.toLowerCase());
+      const idx = (name: string) => headers.indexOf(name);
+
+      const payload = lines.slice(1).map((line) => {
+        const cells = parseCsvLine(line);
+        const productName = cells[idx("product_name")] || "";
+        const categoryId = cells[idx("category_id")] || "";
+        const sku = cells[idx("sku")] || generateSKU(productName || "PRD", categoryId || "");
+        return {
+          sku,
+          product_name: productName,
+          category_id: categoryId,
+          barcode: cells[idx("barcode")] || "",
+          supplier: cells[idx("supplier")] || "",
+          warehouse_location: cells[idx("warehouse_location")] || "",
+          unit_price: Number(cells[idx("unit_price")] || 0),
+          inventory_on_hand: Number(cells[idx("inventory_on_hand")] || 0),
+          unit: cells[idx("unit")] || null,
+        };
+      }).filter((p) => p.product_name && p.category_id && p.barcode && p.supplier && p.warehouse_location);
+
+      if (payload.length === 0) {
+        toast.error("No valid rows in CSV", { description: "Required: product_name, category_id, barcode, supplier, warehouse_location" });
+        return;
+      }
+
+      const response = await fetch(`https://${projectId}.supabase.co/rest/v1/products`, {
+        method: "POST",
+        headers: {
+          apikey: publicAnonKey,
+          Authorization: `Bearer ${publicAnonKey}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      await loadProducts();
+      toast.success("CSV imported", { description: `${payload.length} product(s) inserted` });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Import failed";
+      toast.error("Import failed", { description: message });
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const openViewProduct = (product: Product) => {
+    setSelectedProduct(product);
+    setShowViewDialog(true);
+  };
+
+  const openEditProduct = (product: Product) => {
+    setSelectedProduct(product);
+    setEditFormData({
+      productName: product.name,
+      category_id: product.category_id || "",
+      unit: product.unit || "",
+      barcode: product.barcode || "",
+      supplier: product.supplier || "",
+      location: product.location || "",
+      unitPrice: String(product.unitPrice ?? 0),
+      currentStock: String(product.currentStock ?? 0),
+    });
+    setShowEditDialog(true);
+  };
+
+  const syncInventoryOnHand = async (productUuid: string, stockQty: number) => {
+    if (!productUuid) return;
+    const headers = {
+      apikey: publicAnonKey,
+      Authorization: `Bearer ${publicAnonKey}`,
+      "Content-Type": "application/json"
+    };
+
+    const invLookup = await fetch(
+      `https://${projectId}.supabase.co/rest/v1/inventory_on_hand?select=product_id,bin_id&product_id=eq.${encodeURIComponent(productUuid)}&limit=1`,
+      { method: "GET", headers }
+    );
+    const invRows = invLookup.ok ? await invLookup.json() : [];
+
+    if (invRows.length > 0) {
+      const row = invRows[0];
+      await fetch(
+        `https://${projectId}.supabase.co/rest/v1/inventory_on_hand?product_id=eq.${encodeURIComponent(row.product_id)}&bin_id=eq.${encodeURIComponent(row.bin_id)}`,
+        {
+          method: "PATCH",
+          headers: { ...headers, Prefer: "return=minimal" },
+          body: JSON.stringify({ qty_on_hand: stockQty }),
+        }
+      );
+      return;
+    }
+
+    const binLookup = await fetch(
+      `https://${projectId}.supabase.co/rest/v1/inventory_on_hand?select=bin_id&limit=1`,
+      { method: "GET", headers }
+    );
+    let binId: string | null = null;
+    if (binLookup.ok) {
+      const binRows = await binLookup.json();
+      if (binRows.length > 0) {
+        binId = binRows[0].bin_id;
+      }
+    }
+
+    if (!binId) {
+      const binsTableLookup = await fetch(
+        `https://${projectId}.supabase.co/rest/v1/bins?select=id&limit=1`,
+        { method: "GET", headers }
+      );
+      if (binsTableLookup.ok) {
+        const binsRows = await binsTableLookup.json();
+        if (binsRows.length > 0) {
+          binId = binsRows[0].id;
+        }
+      }
+    }
+
+    if (!binId) {
+      throw new Error("Cannot sync stock: no bin available");
+    }
+
+    await fetch(`https://${projectId}.supabase.co/rest/v1/inventory_on_hand`, {
+      method: "POST",
+      headers: { ...headers, Prefer: "return=minimal" },
+      body: JSON.stringify({
+        product_id: productUuid,
+        bin_id: binId,
+        qty_on_hand: stockQty,
+      }),
+    });
+  };
+
+  const handleUpdateProduct = async () => {
+    if (!selectedProduct) return;
+    if (!editFormData.productName || !editFormData.category_id || !editFormData.unit || !editFormData.barcode ||
+        !editFormData.supplier || !editFormData.location || !editFormData.unitPrice) {
+      toast.error("Missing Fields", { description: "Please fill in all required fields" });
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      const headers = {
+        apikey: publicAnonKey,
+        Authorization: `Bearer ${publicAnonKey}`,
+        "Content-Type": "application/json",
+      };
+
+      const payload = {
+        product_name: editFormData.productName,
+        category_id: editFormData.category_id,
+        unit: editFormData.unit,
+        barcode: editFormData.barcode,
+        supplier: editFormData.supplier,
+        warehouse_location: editFormData.location,
+        unit_price: parseFloat(editFormData.unitPrice),
+        inventory_on_hand: parseInt(editFormData.currentStock || "0", 10) || 0,
+      };
+
+      const updateRes = await fetch(
+        `https://${projectId}.supabase.co/rest/v1/products?product_id=eq.${selectedProduct.id}`,
+        {
+          method: "PATCH",
+          headers: { ...headers, Prefer: "return=minimal" },
+          body: JSON.stringify(payload),
+        }
+      );
+      if (!updateRes.ok) {
+        throw new Error(await updateRes.text());
+      }
+
+      if (selectedProduct.product_uuid) {
+        await syncInventoryOnHand(
+          selectedProduct.product_uuid,
+          parseInt(editFormData.currentStock || "0", 10) || 0
+        );
+      }
+
+      await loadProducts();
+      setShowEditDialog(false);
+      setSelectedProduct(null);
+      toast.success("Product updated", { description: `${editFormData.productName} saved to database` });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Update failed";
+      toast.error("Update failed", { description: message });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const handleAddProduct = async () => {
-    if (!formData.productName || !formData.category_id || !formData.barcode ||
-        !formData.supplier || !formData.location || !formData.minStock || !formData.unitPrice) {
+    if (!formData.productName || !formData.category_id || !formData.unit || !formData.barcode ||
+        !formData.supplier || !formData.location || !formData.unitPrice) {
       addDebugLog("error", "Validation failed - missing required fields");
       toast.error("Missing Fields", {
         description: "Please fill in all required fields"
@@ -343,11 +605,12 @@ const categoryLabelById = useMemo(() => {
         sku: generatedSKU,
         product_name: formData.productName,
         category_id: formData.category_id,
+        unit: formData.unit || null,
         barcode: formData.barcode,
         supplier: formData.supplier,
         warehouse_location: formData.location,
-        min_stock_level: parseInt(formData.minStock, 10),
-        unit_price: parseFloat(formData.unitPrice)
+        unit_price: parseFloat(formData.unitPrice),
+        inventory_on_hand: parseInt(formData.currentStock || "0", 10) || 0
       };
 
       setLastPayload(productPayload);
@@ -397,42 +660,11 @@ const categoryLabelById = useMemo(() => {
 
       addDebugLog("success", "Product inserted successfully (HTTP 201)");
       addDebugLog("info", "Refreshing product list from database...");
-
-      const fetchResponse = await fetch(apiUrl, {
-        method: "GET",
-        headers: {
-          "apikey": publicAnonKey,
-          "Authorization": `Bearer ${publicAnonKey}`,
-          "Content-Type": "application/json"
-        }
+      await loadProducts();
+      setLastResponse({
+        success: true,
+        message: "Product created and table refreshed"
       });
-
-      if (fetchResponse.ok) {
-        const fetchedProducts = await fetchResponse.json();
-
-        const mappedProducts: Product[] = fetchedProducts.map((p: any) => ({
-          id: p.id?.toString() || Date.now().toString(),
-          sku: p.sku,
-          name: p.product_name,
-          category_id: p.category,
-          barcode: p.barcode,
-          supplier: p.supplier,
-          minStock: p.min_stock_level,
-          currentStock: p.current_stock || 0,
-          unitPrice: p.unit_price,
-          location: p.warehouse_location,
-          createdAt: p.created_at
-        }));
-
-        setProducts(mappedProducts);
-        addDebugLog("success", `Table refreshed with ${mappedProducts.length} products from database`);
-
-        setLastResponse({
-          success: true,
-          message: "Product created and table refreshed",
-          productsCount: mappedProducts.length
-        });
-      }
 
       toast.success("Product Added Successfully", {
         description: `${formData.productName} (${generatedSKU}) has been saved to the database`
@@ -441,10 +673,10 @@ const categoryLabelById = useMemo(() => {
       setFormData({
         productName: "",
         category_id: "",
+        unit: "",
         barcode: "",
         supplier: "",
         location: "",
-        minStock: "",
         unitPrice: "",
         currentStock: "0"
       });
@@ -472,11 +704,26 @@ const categoryLabelById = useMemo(() => {
           <p className="text-[#6B7280]">Manage SKUs, barcodes, and inventory master data</p>
         </div>
         <div className="flex flex-wrap gap-3">
-          <Button variant="outline" className="border-[#111827]/20 text-[#111827] hover:bg-[#F8FAFC]">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={handleImportCsv}
+          />
+          <Button
+            variant="outline"
+            className="border-[#111827]/20 text-[#111827] hover:bg-[#F8FAFC]"
+            onClick={() => fileInputRef.current?.click()}
+          >
             <Upload className="w-4 h-4 mr-2" />
             Import CSV
           </Button>
-          <Button variant="outline" className="border-[#111827]/20 text-[#111827] hover:bg-[#F8FAFC]">
+          <Button
+            variant="outline"
+            className="border-[#111827]/20 text-[#111827] hover:bg-[#F8FAFC]"
+            onClick={handleExportCsv}
+          >
             <Download className="w-4 h-4 mr-2" />
             Export
           </Button>
@@ -558,6 +805,24 @@ const categoryLabelById = useMemo(() => {
                   <Input placeholder="4987654321XXX" className="mt-2 border-[#111827]/10" value={formData.barcode} onChange={(e) => setFormData({ ...formData, barcode: e.target.value })} />
                 </div>
                 <div>
+                  <Label>Unit</Label>
+                  <Select
+                    value={formData.unit}
+                    onValueChange={(value) => setFormData({ ...formData, unit: value })}
+                  >
+                    <SelectTrigger className="mt-2 border-[#111827]/10">
+                      <SelectValue placeholder="Select unit" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {unitOptions.map((unit) => (
+                        <SelectItem key={unit} value={unit}>
+                          {unit}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
                   <Label>Supplier</Label>
                   <Input placeholder="Enter supplier name" className="mt-2 border-[#111827]/10" value={formData.supplier} onChange={(e) => setFormData({ ...formData, supplier: e.target.value })} />
                 </div>
@@ -566,12 +831,12 @@ const categoryLabelById = useMemo(() => {
                   <Input placeholder="Zone A-01" className="mt-2 border-[#111827]/10" value={formData.location} onChange={(e) => setFormData({ ...formData, location: e.target.value })} />
                 </div>
                 <div>
-                  <Label>Min Stock Level</Label>
-                  <Input type="number" placeholder="1000" className="mt-2 border-[#111827]/10" value={formData.minStock} onChange={(e) => setFormData({ ...formData, minStock: e.target.value })} />
-                </div>
-                <div>
                   <Label>Unit Price</Label>
                   <Input type="number" placeholder="0.00" className="mt-2 border-[#111827]/10" value={formData.unitPrice} onChange={(e) => setFormData({ ...formData, unitPrice: e.target.value })} />
+                </div>
+                <div>
+                  <Label>Current Stock</Label>
+                  <Input type="number" min="0" placeholder="0" className="mt-2 border-[#111827]/10" value={formData.currentStock} onChange={(e) => setFormData({ ...formData, currentStock: e.target.value })} />
                 </div>
               </div>
               <div className="flex gap-3 justify-end">
@@ -589,7 +854,7 @@ const categoryLabelById = useMemo(() => {
 
       <Card className="bg-white border-[#111827]/10 shadow-sm">
         <CardContent className="pt-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div className="md:col-span-2">
               <Label className="text-[#6B7280] mb-2 block">Search</Label>
               <div className="relative">
@@ -598,16 +863,44 @@ const categoryLabelById = useMemo(() => {
               </div>
             </div>
             <div>
-              <Label className="text-[#6B7280] mb-2 block">Category</Label>
-              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+              <Label className="text-[#6B7280] mb-2 block">Parent Category</Label>
+              <Select
+                value={parentCategoryFilter}
+                onValueChange={(value) => {
+                  setParentCategoryFilter(value);
+                  setChildCategoryFilter("all");
+                }}
+              >
                 <SelectTrigger className="border-[#111827]/10">
-                  <SelectValue placeholder="All Categories" />
+                  <SelectValue placeholder="All Parent Categories" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Categories</SelectItem>
-                  <SelectItem value="Pharma">Pharma</SelectItem>
-                  <SelectItem value="Medical Supplies">Medical Supplies</SelectItem>
-                  <SelectItem value="Cold Chain">Cold Chain</SelectItem>
+                  <SelectItem value="all">All Parent Categories</SelectItem>
+                  {parentCategories.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-[#6B7280] mb-2 block">Subcategory</Label>
+              <Select
+                value={childCategoryFilter}
+                onValueChange={setChildCategoryFilter}
+                disabled={parentCategoryFilter === "all" || filterChildCategories.length === 0}
+              >
+                <SelectTrigger className="border-[#111827]/10">
+                  <SelectValue placeholder={parentCategoryFilter === "all" ? "Select parent first" : "All Subcategories"} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Subcategories</SelectItem>
+                  {filterChildCategories.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -619,9 +912,11 @@ const categoryLabelById = useMemo(() => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Locations</SelectItem>
-                  <SelectItem value="Zone A">Zone A</SelectItem>
-                  <SelectItem value="Zone B">Zone B</SelectItem>
-                  <SelectItem value="Cold Storage">Cold Storage</SelectItem>
+                  {locationOptions.map((location) => (
+                    <SelectItem key={location} value={location}>
+                      {location}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -631,12 +926,8 @@ const categoryLabelById = useMemo(() => {
 
       <Card className="bg-white border-[#111827]/10 shadow-sm">
         <CardHeader>
-          <CardTitle className="text-[#111827] font-semibold flex items-center justify-between">
-            <span>Product Inventory ({filteredProducts.length} items)</span>
-            <Button variant="outline" size="sm" className="border-[#111827]/20 text-[#111827]">
-              <Filter className="w-4 h-4 mr-2" />
-              Advanced Filters
-            </Button>
+          <CardTitle className="text-[#111827] font-semibold">
+            Product Inventory ({filteredProducts.length} items)
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -646,9 +937,11 @@ const categoryLabelById = useMemo(() => {
                 <tr className="border-b-2 border-[#1A2B47]">
                   <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">SKU</th>
                   <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">Product Name</th>
+                  <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">Unit</th>
                   <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">Category</th>
                   <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">Barcode (EAN-13)</th>
                   <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">Supplier</th>
+                  <th className="text-right py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">Price</th>
                   <th className="text-right py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">Stock</th>
                   <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">Location</th>
                   <th className="text-right py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">Actions</th>
@@ -659,20 +952,41 @@ const categoryLabelById = useMemo(() => {
                   <tr key={product.id} className="border-b border-[#E5E7EB] hover:bg-[#F8FAFC] transition-colors">
                     <td className="py-4 px-4"><span className="font-mono text-[#00A3AD] font-semibold">{product.sku}</span></td>
                     <td className="py-4 px-4 text-[#111827] font-medium">{product.name}</td>
-                    <td className="py-4 px-4"><span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${getCategoryColor(product.category_id)}`}>{categoryLabelById.get(product.category_id) || "—"}</span></td>
+                    <td className="py-4 px-4 text-sm text-[#6B7280]">{product.unit || "-"}</td>
+                    <td className="py-4 px-4"><span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${getCategoryColor(product.category_id)}`}>{categoryLabelById.get(product.category_id) || product.category_text || product.category_id || "-"}</span></td>
                     <td className="py-4 px-4"><div className="flex items-center gap-2"><Barcode className="w-4 h-4 text-[#6B7280]" /><span className="font-mono text-sm text-[#111827]">{product.barcode}</span></div></td>
                     <td className="py-4 px-4 text-sm text-[#6B7280]">{product.supplier}</td>
+                    <td className="py-4 px-4 text-right text-sm text-[#111827] font-medium">
+                      {Number(product.unitPrice || 0).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </td>
                     <td className="py-4 px-4 text-right">
                       <div className="flex flex-col items-end">
-                        <span className={`${product.currentStock < product.minStock ? "text-[#F97316]" : "text-[#111827]"} font-bold`}>{product.currentStock.toLocaleString()}</span>
-                        {product.currentStock < product.minStock && <span className="text-xs text-[#F97316] font-medium">Below Min</span>}
+                        <span className={`${product.currentStock <= 0 ? "text-[#F97316]" : "text-[#111827]"} font-bold`}>{product.currentStock.toLocaleString()}</span>
+                        {product.currentStock <= 0 && <span className="text-xs text-[#F97316] font-medium">Out of Stock</span>}
                       </div>
                     </td>
                     <td className="py-4 px-4 text-sm text-[#6B7280]">{product.location}</td>
                     <td className="py-4 px-4 text-right">
                       <div className="flex gap-2 justify-end">
-                        <Button size="sm" variant="outline" className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"><FileText className="w-4 h-4" /></Button>
-                        <Button size="sm" variant="outline" className="border-[#111827]/20 text-[#111827]">Edit</Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"
+                          onClick={() => openViewProduct(product)}
+                        >
+                          <FileText className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-[#111827]/20 text-[#111827]"
+                          onClick={() => openEditProduct(product)}
+                        >
+                          Edit
+                        </Button>
                       </div>
                     </td>
                   </tr>
@@ -683,10 +997,153 @@ const categoryLabelById = useMemo(() => {
         </CardContent>
       </Card>
 
+      <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="text-[#111827]">Product Details</DialogTitle>
+            <DialogDescription className="text-[#6B7280]">
+              Database-backed product information
+            </DialogDescription>
+          </DialogHeader>
+          {selectedProduct && (
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div><span className="text-[#6B7280]">SKU</span><div className="font-medium text-[#111827]">{selectedProduct.sku}</div></div>
+              <div><span className="text-[#6B7280]">Unit</span><div className="font-medium text-[#111827]">{selectedProduct.unit || "-"}</div></div>
+              <div><span className="text-[#6B7280]">Product Name</span><div className="font-medium text-[#111827]">{selectedProduct.name}</div></div>
+              <div><span className="text-[#6B7280]">Category</span><div className="font-medium text-[#111827]">{categoryLabelById.get(selectedProduct.category_id) || selectedProduct.category_text || selectedProduct.category_id || "-"}</div></div>
+              <div><span className="text-[#6B7280]">Barcode</span><div className="font-medium text-[#111827]">{selectedProduct.barcode || "-"}</div></div>
+              <div><span className="text-[#6B7280]">Supplier</span><div className="font-medium text-[#111827]">{selectedProduct.supplier || "-"}</div></div>
+              <div><span className="text-[#6B7280]">Location</span><div className="font-medium text-[#111827]">{selectedProduct.location || "-"}</div></div>
+              <div><span className="text-[#6B7280]">Price</span><div className="font-medium text-[#111827]">{Number(selectedProduct.unitPrice || 0).toFixed(2)}</div></div>
+              <div><span className="text-[#6B7280]">Current Stock</span><div className="font-medium text-[#111827]">{selectedProduct.currentStock}</div></div>
+              <div><span className="text-[#6B7280]">Updated</span><div className="font-medium text-[#111827]">{selectedProduct.inventoryUpdatedAt || "-"}</div></div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-[#111827]">Edit Product</DialogTitle>
+            <DialogDescription className="text-[#6B7280]">
+              Update product fields and save to database
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-4 py-2">
+            <div>
+              <Label>Product Name</Label>
+              <Input
+                className="mt-2 border-[#111827]/10"
+                value={editFormData.productName}
+                onChange={(e) => setEditFormData({ ...editFormData, productName: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>Category</Label>
+              <Select
+                value={editFormData.category_id}
+                onValueChange={(value) => setEditFormData({ ...editFormData, category_id: value })}
+              >
+                <SelectTrigger className="mt-2 border-[#111827]/10">
+                  <SelectValue placeholder="Select category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {buildCategoryOptions(categories).map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Unit</Label>
+              <Select
+                value={editFormData.unit}
+                onValueChange={(value) => setEditFormData({ ...editFormData, unit: value })}
+              >
+                <SelectTrigger className="mt-2 border-[#111827]/10">
+                  <SelectValue placeholder="Select unit" />
+                </SelectTrigger>
+                <SelectContent>
+                  {unitOptions.map((unit) => (
+                    <SelectItem key={unit} value={unit}>
+                      {unit}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Barcode (EAN-13)</Label>
+              <Input
+                className="mt-2 border-[#111827]/10"
+                value={editFormData.barcode}
+                onChange={(e) => setEditFormData({ ...editFormData, barcode: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>Supplier</Label>
+              <Input
+                className="mt-2 border-[#111827]/10"
+                value={editFormData.supplier}
+                onChange={(e) => setEditFormData({ ...editFormData, supplier: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>Warehouse Location</Label>
+              <Input
+                className="mt-2 border-[#111827]/10"
+                value={editFormData.location}
+                onChange={(e) => setEditFormData({ ...editFormData, location: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>Unit Price</Label>
+              <Input
+                type="number"
+                min="0"
+                className="mt-2 border-[#111827]/10"
+                value={editFormData.unitPrice}
+                onChange={(e) => setEditFormData({ ...editFormData, unitPrice: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>Current Stock</Label>
+              <Input
+                type="number"
+                min="0"
+                className="mt-2 border-[#111827]/10"
+                value={editFormData.currentStock}
+                onChange={(e) => setEditFormData({ ...editFormData, currentStock: e.target.value })}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3">
+            <Button
+              variant="outline"
+              className="border-[#111827]/20 text-[#111827]"
+              onClick={() => setShowEditDialog(false)}
+              disabled={isUpdating}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+              onClick={handleUpdateProduct}
+              disabled={isUpdating}
+            >
+              {isUpdating ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card className="bg-white border-[#111827]/10"><CardContent className="pt-6"><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-lg bg-[#00A3AD]/10 flex items-center justify-center"><Package className="w-6 h-6 text-[#00A3AD]" /></div><div><div className="text-2xl font-bold text-[#111827]">{products.length}</div><div className="text-sm text-[#6B7280]">Total Products</div></div></div></CardContent></Card>
         <Card className="bg-white border-[#111827]/10"><CardContent className="pt-6"><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-lg bg-[#1A2B47]/10 flex items-center justify-center"><Barcode className="w-6 h-6 text-[#1A2B47]" /></div><div><div className="text-2xl font-bold text-[#111827]">{products.length}</div><div className="text-sm text-[#6B7280]">Unique SKUs</div></div></div></CardContent></Card>
-        <Card className="bg-white border-[#111827]/10"><CardContent className="pt-6"><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-lg bg-[#F97316]/10 flex items-center justify-center"><Package className="w-6 h-6 text-[#F97316]" /></div><div><div className="text-2xl font-bold text-[#F97316]">{products.filter((p) => p.currentStock < p.minStock).length}</div><div className="text-sm text-[#6B7280]">Low Stock Items</div></div></div></CardContent></Card>
+        <Card className="bg-white border-[#111827]/10"><CardContent className="pt-6"><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-lg bg-[#F97316]/10 flex items-center justify-center"><Package className="w-6 h-6 text-[#F97316]" /></div><div><div className="text-2xl font-bold text-[#F97316]">{products.filter((p) => p.currentStock <= 0).length}</div><div className="text-sm text-[#6B7280]">Out of Stock Items</div></div></div></CardContent></Card>
         <Card className="bg-white border-[#111827]/10"><CardContent className="pt-6"><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-lg bg-[#0891B2]/10 flex items-center justify-center"><Package className="w-6 h-6 text-[#0891B2]" /></div><div><div className="text-2xl font-bold text-[#111827]">{products.filter((p) => p.category_id === "cold_chain").reduce((sum, p) => sum + p.currentStock, 0)}</div><div className="text-sm text-[#6B7280]">Cold Chain Units</div></div></div></CardContent></Card>
       </div>
 
@@ -732,3 +1189,4 @@ const categoryLabelById = useMemo(() => {
     </div>
   );
 }
+
