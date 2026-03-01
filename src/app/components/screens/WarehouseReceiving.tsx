@@ -1,4 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+} from "react";
 import {
   ScanBarcode,
   CheckCircle,
@@ -34,10 +39,8 @@ interface InventoryItem {
   name: string;
   unit: string;
   lastUpdated: string | null;
-  batch: string;
   systemCount: number;
   status: "normal" | "low" | "zero";
-  expiry: string;
 }
 
 interface GrnLine {
@@ -48,79 +51,6 @@ interface GrnLine {
   discrepancyReason: string;
   otherReason: string;
 }
-
-const PRODUCT_CATALOG = [
-  {
-    id: "39",
-    sku: "MED-003",
-    name: "Amoxicillin 500mg",
-    batch: "#9902",
-    expiry: "2026-12-31",
-  },
-  {
-    id: "37",
-    sku: "MED-001",
-    name: "Paracetamol 500mg",
-    batch: "#9903",
-    expiry: "2027-03-15",
-  },
-  {
-    id: "40",
-    sku: "MED-004",
-    name: "Cetirizine 10mg",
-    batch: "#9904",
-    expiry: "2026-08-20",
-  },
-  {
-    id: "41",
-    sku: "MED-005",
-    name: "Loperamide 2mg",
-    batch: "#9905",
-    expiry: "2026-11-10",
-  },
-  {
-    id: "38",
-    sku: "MED-002",
-    name: "Ibuprofen 200mg",
-    batch: "#9906",
-    expiry: "2027-01-25",
-  },
-  {
-    id: "42",
-    sku: "VIT-001",
-    name: "Vitamin C 500mg",
-    batch: "#9907",
-    expiry: "2027-06-01",
-  },
-  {
-    id: "43",
-    sku: "VIT-002",
-    name: "Vitamin D3 1000IU",
-    batch: "#9908",
-    expiry: "2027-06-01",
-  },
-  {
-    id: "44",
-    sku: "VIT-003",
-    name: "Multivitamins + Iron",
-    batch: "#9909",
-    expiry: "2027-06-01",
-  },
-  {
-    id: "45",
-    sku: "VIT-004",
-    name: "Calcium + Magnesium",
-    batch: "#9910",
-    expiry: "2027-06-01",
-  },
-  {
-    id: "46",
-    sku: "VIT-005",
-    name: "Fish Oil 1000mg",
-    batch: "#9911",
-    expiry: "2027-06-01",
-  },
-];
 
 const MIN_STOCK_THRESHOLD = 500;
 
@@ -162,6 +92,30 @@ export function WarehouseReceiving() {
   );
   const [loadingInventory, setLoadingInventory] =
     useState(false);
+  const [stockSearch, setStockSearch] = useState("");
+
+  const filteredInventory = useMemo(() => {
+    const keyword = stockSearch.trim().toLowerCase();
+    if (!keyword) return inventory;
+    return inventory.filter((item) => {
+      return (
+        item.name.toLowerCase().includes(keyword) ||
+        item.sku.toLowerCase().includes(keyword)
+      );
+    });
+  }, [inventory, stockSearch]);
+
+  const lowStockCount = useMemo(
+    () =>
+      inventory.filter((item) => item.status === "low").length,
+    [inventory],
+  );
+
+  const outOfStockCount = useMemo(
+    () =>
+      inventory.filter((item) => item.status === "zero").length,
+    [inventory],
+  );
 
   const fetchInventory = useCallback(async () => {
     setLoadingInventory(true);
@@ -172,47 +126,56 @@ export function WarehouseReceiving() {
         Authorization: `Bearer ${publicAnonKey}`,
       };
 
-      const vRes = await fetch(
-        `${baseUrl}/v_products_with_inventory?select=product_id,sku,name,unit,qty_on_hand,updated_at`,
+      const productsRes = await fetch(
+        `${baseUrl}/products?select=product_id,product_uuid,sku,product_name,unit&order=product_name.asc`,
         { headers },
       );
-      if (!vRes.ok)
+      if (!productsRes.ok)
         throw new Error(
-          `v_products_with_inventory: ${vRes.status} ${await vRes.text()}`,
+          `products: ${productsRes.status} ${await productsRes.text()}`,
         );
-      const rows: any[] = await vRes.json();
+      const products: any[] = await productsRes.json();
 
-      const catalogMap = Object.fromEntries(
-        PRODUCT_CATALOG.map((p) => [p.id, p]),
+      const iohRes = await fetch(
+        `${baseUrl}/inventory_on_hand?select=product_id,qty_on_hand,updated_at`,
+        { headers },
       );
-      const allowedIds = new Set(
-        PRODUCT_CATALOG.map((p) => p.id),
+      if (!iohRes.ok)
+        throw new Error(
+          `inventory_on_hand: ${iohRes.status} ${await iohRes.text()}`,
+        );
+      const onHandRows: any[] = await iohRes.json();
+
+      const onHandByProductUuid = new Map(
+        onHandRows.map((row) => [String(row.product_id), row]),
+      );
+      const onHandByProductId = new Map(
+        onHandRows.map((row) => [String(row.product_id), row]),
       );
 
-      const items: InventoryItem[] = rows
-        .filter((r) => allowedIds.has(String(r.product_id)))
-        .map((r) => {
-          const qty = Number(r.qty_on_hand ?? 0);
-          const catalog = catalogMap[String(r.product_id)];
-          const status: InventoryItem["status"] =
-            qty === 0
-              ? "zero"
-              : qty < MIN_STOCK_THRESHOLD
-                ? "low"
-                : "normal";
+      const items: InventoryItem[] = products.map((p) => {
+        const ioh =
+          onHandByProductUuid.get(String(p.product_uuid)) ??
+          onHandByProductId.get(String(p.product_id)) ??
+          null;
+        const qty = Number(ioh?.qty_on_hand ?? 0);
+        const status: InventoryItem["status"] =
+          qty === 0
+            ? "zero"
+            : qty < MIN_STOCK_THRESHOLD
+              ? "low"
+              : "normal";
 
-          return {
-            id: String(r.product_id),
-            sku: r.sku ?? "N/A",
-            name: r.name ?? "Unknown Product",
-            unit: r.unit ?? "-",
-            lastUpdated: r.updated_at ?? null,
-            batch: catalog?.batch ?? "—",
-            systemCount: qty,
-            status,
-            expiry: catalog?.expiry ?? "—",
-          };
-        });
+        return {
+          id: String(p.product_id),
+          sku: p.sku ?? "N/A",
+          name: p.product_name ?? "Unknown Product",
+          unit: p.unit ?? "-",
+          lastUpdated: ioh?.updated_at ?? null,
+          systemCount: qty,
+          status,
+        };
+      });
 
       setInventory(items);
     } catch (err) {
@@ -261,28 +224,29 @@ export function WarehouseReceiving() {
   };
 
   const handleScan = () => {
-    const randomCatalog =
-      PRODUCT_CATALOG[
-        Math.floor(Math.random() * PRODUCT_CATALOG.length)
-      ];
-    const inv = inventory.find(
-      (i) => i.id === randomCatalog.id,
-    );
+    if (inventory.length === 0) {
+      toast.error("No products found", {
+        description: "Please refresh inventory first.",
+      });
+      return;
+    }
+    const randomProduct =
+      inventory[Math.floor(Math.random() * inventory.length)];
     const scanned = {
-      id: randomCatalog.id,
-      name: randomCatalog.name,
-      systemCount: inv?.systemCount ?? 0,
+      id: randomProduct.id,
+      name: randomProduct.name,
+      systemCount: randomProduct.systemCount,
     };
     setLastScannedItem(scanned);
     if (showGrnForm) {
       insertScannedItemToLines(scanned);
       toast.success("Barcode Scanned", {
-        description: `${randomCatalog.name} added to GRN line items`,
+        description: `${randomProduct.name} added to GRN line items`,
       });
       return;
     }
     toast.success("Barcode Scanned", {
-      description: `${randomCatalog.name} scanned. Click View GRN to continue.`,
+      description: `${randomProduct.name} scanned. Click View GRN to continue.`,
     });
   };
 
@@ -401,7 +365,7 @@ export function WarehouseReceiving() {
     };
 
     const linePayload = lines.map((line, idx) => {
-      const product = PRODUCT_CATALOG.find(
+      const product = inventory.find(
         (item) => item.id === line.productId,
       );
       const expected = Number(line.qtyExpected);
@@ -513,7 +477,7 @@ export function WarehouseReceiving() {
       setSavedGrnNumber(grnNumber);
 
       toast.success(`GRN ${grnNumber} posted!`, {
-        description: `${result.lines_processed} line(s) · ${result.products_updated} product(s) updated`,
+        description: `${result.lines_processed} line(s) - ${result.products_updated} product(s) updated`,
       });
 
       await new Promise((r) => setTimeout(r, 600));
@@ -666,14 +630,20 @@ export function WarehouseReceiving() {
                             <SelectValue placeholder="Select product" />
                           </SelectTrigger>
                           <SelectContent>
-                            {PRODUCT_CATALOG.map((item) => (
-                              <SelectItem
-                                key={item.id}
-                                value={item.id}
-                              >
-                                {item.name} ({item.sku})
-                              </SelectItem>
-                            ))}
+                            {inventory.length === 0 ? (
+                              <div className="px-3 py-2 text-sm text-[#6B7280]">
+                                No products loaded yet.
+                              </div>
+                            ) : (
+                              inventory.map((item) => (
+                                <SelectItem
+                                  key={item.id}
+                                  value={item.id}
+                                >
+                                  {item.name} ({item.sku})
+                                </SelectItem>
+                              ))
+                            )}
                           </SelectContent>
                         </Select>
                       </div>
@@ -798,7 +768,7 @@ export function WarehouseReceiving() {
 
       <Card className="bg-white border-[#111827]/10 shadow-sm">
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <CardTitle className="text-[#111827] font-semibold">
                 Stock-on-Hand
@@ -807,28 +777,67 @@ export function WarehouseReceiving() {
                 Current inventory levels
               </p>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={fetchInventory}
-              disabled={loadingInventory}
-              className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"
-            >
-              <RefreshCw
-                className={`w-4 h-4 mr-1 ${loadingInventory ? "animate-spin" : ""}`}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Input
+                value={stockSearch}
+                onChange={(e) => setStockSearch(e.target.value)}
+                placeholder="Search product or SKU"
+                className="w-full sm:w-64 border-[#111827]/10"
               />
-              Refresh
-            </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchInventory}
+                disabled={loadingInventory}
+                className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"
+              >
+                <RefreshCw
+                  className={`w-4 h-4 mr-1 ${loadingInventory ? "animate-spin" : ""}`}
+                />
+                Refresh
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+            <div className="rounded-md border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2">
+              <p className="text-xs text-[#6B7280]">
+                Total Products
+              </p>
+              <p className="text-lg font-semibold text-[#111827]">
+                {inventory.length}
+              </p>
+            </div>
+            <div className="rounded-md border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2">
+              <p className="text-xs text-[#92400E]">
+                Low Stock
+              </p>
+              <p className="text-lg font-semibold text-[#B45309]">
+                {lowStockCount}
+              </p>
+            </div>
+            <div className="rounded-md border border-[#FECACA] bg-[#FEF2F2] px-3 py-2">
+              <p className="text-xs text-[#991B1B]">
+                Out of Stock
+              </p>
+              <p className="text-lg font-semibold text-[#B91C1C]">
+                {outOfStockCount}
+              </p>
+            </div>
+          </div>
+
           {loadingInventory && inventory.length === 0 ? (
             <p className="text-sm text-[#6B7280] text-center py-4">
               Loading inventory...
             </p>
           ) : inventory.length === 0 ? (
             <p className="text-sm text-[#6B7280] text-center py-4">
-              No inventory data found.
+              No products found in Product Master.
+            </p>
+          ) : filteredInventory.length === 0 ? (
+            <p className="text-sm text-[#6B7280] text-center py-4">
+              No products match your search.
             </p>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-[#E5E7EB]">
@@ -853,7 +862,7 @@ export function WarehouseReceiving() {
                   </tr>
                 </thead>
                 <tbody>
-                  {inventory.map((item) => (
+                  {filteredInventory.map((item) => (
                     <tr
                       key={item.id}
                       className="border-b border-[#E5E7EB] last:border-b-0"
@@ -896,7 +905,7 @@ export function WarehouseReceiving() {
             {isPosted ? (
               <div className="w-full h-14 flex items-center justify-center gap-2 rounded-md bg-green-50 border border-green-300 text-green-700 font-semibold">
                 <CheckCircle className="w-5 h-5" />
-                Posted — {savedGrnNumber}
+                Posted - {savedGrnNumber}
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-2">
@@ -921,7 +930,7 @@ export function WarehouseReceiving() {
             )}
             {!isPosted && savedGrnId && (
               <p className="text-xs text-center text-[#6B7280]">
-                GRN saved as draft — click{" "}
+                GRN saved as draft - click{" "}
                 <strong>Post GRN</strong> to update inventory
               </p>
             )}

@@ -11,7 +11,6 @@ import {
   ClipboardList,
   LogOut,
   User,
-  FileText,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { toast } from "sonner";
@@ -28,7 +27,6 @@ const navigation = [
   },
   { name: "Product Master", href: "/products", icon: Database },
   { name: "Procurement", href: "/procurement", icon: Package },
-  { name: "PO List", href: "/po-list", icon: FileText },
   { name: "Warehouse", href: "/warehouse", icon: Warehouse },
   {
     name: "Discrepancies",

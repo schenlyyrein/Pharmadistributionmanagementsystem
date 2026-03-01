@@ -114,7 +114,8 @@ export function ProductMaster() {
     useState(false);
   const [showViewDialog, setShowViewDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] =
+    useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -525,6 +526,27 @@ export function ProductMaster() {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    const fileName = file.name.toLowerCase();
+    const isCsvFile = fileName.endsWith(".csv");
+    const allowedCsvMimes = new Set([
+      "text/csv",
+      "application/csv",
+      "application/vnd.ms-excel",
+      "text/plain",
+    ]);
+    const hasMime = Boolean(file.type);
+    const isCsvMime = hasMime
+      ? allowedCsvMimes.has(file.type.toLowerCase())
+      : true;
+
+    if (!isCsvFile || !isCsvMime) {
+      toast.error("Invalid file type", {
+        description: "CSV files only (.csv).",
+      });
+      event.target.value = "";
+      return;
+    }
+
     try {
       const text = await file.text();
       const lines = text
@@ -857,7 +879,9 @@ export function ProductMaster() {
       });
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Delete failed";
+        error instanceof Error
+          ? error.message
+          : "Delete failed";
       addDebugLog("error", "Failed to delete product", error);
       toast.error("Delete Failed", { description: message });
     } finally {
@@ -1051,7 +1075,7 @@ export function ProductMaster() {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".csv,text/csv"
+            accept=".csv"
             className="hidden"
             onChange={handleImportCsv}
           />
@@ -1833,15 +1857,17 @@ export function ProductMaster() {
               Delete Product?
             </DialogTitle>
             <DialogDescription className="text-[#6B7280]">
-              This action cannot be undone. The product and related
-              inventory records will be permanently removed from the
-              database.
+              This action cannot be undone. The product and
+              related inventory records will be permanently
+              removed from the database.
             </DialogDescription>
           </DialogHeader>
           {selectedProduct && (
             <div className="bg-[#F8FAFC] border border-[#111827]/10 rounded-lg p-4 space-y-2">
               <div className="flex justify-between">
-                <span className="text-[#6B7280] text-sm">SKU:</span>
+                <span className="text-[#6B7280] text-sm">
+                  SKU:
+                </span>
                 <span className="font-mono font-semibold text-[#111827] text-sm">
                   {selectedProduct.sku}
                 </span>
