@@ -136,6 +136,38 @@ export function DiscrepancyApprovals() {
 
   const updateGrnStatus = async (grnId: string, status: "approved" | "rejected") => {
     try {
+      // First, calculate and update variance for all lines in this GRN
+      const grnToUpdate = grns.find(g => g.id === grnId);
+      
+      if (grnToUpdate && grnToUpdate.grn_draft_lines) {
+        // Update variance for each line
+        for (const line of grnToUpdate.grn_draft_lines) {
+          const calculatedVariance = Number(line.qty_received) - Number(line.qty_expected);
+          
+          // Update the line's variance in the database
+          const lineRes = await fetch(
+            `https://${projectId}.supabase.co/rest/v1/grn_draft_lines?id=eq.${line.id}`,
+            {
+              method: "PATCH",
+              headers: {
+                apikey: publicAnonKey,
+                Authorization: `Bearer ${publicAnonKey}`,
+                "Content-Type": "application/json",
+                Prefer: "return=minimal",
+              },
+              body: JSON.stringify({ variance: calculatedVariance }),
+            },
+          );
+          
+          if (!lineRes.ok) {
+            const errorText = await lineRes.text();
+            console.error("Failed to update line variance:", errorText);
+            // Continue with other lines even if one fails
+          }
+        }
+      }
+      
+      // Then update the GRN status
       const res = await fetch(
         `https://${projectId}.supabase.co/rest/v1/grn_drafts?id=eq.${grnId}`,
         {
@@ -150,9 +182,15 @@ export function DiscrepancyApprovals() {
         },
       );
 
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error("PATCH FAILED:", errorText);
+        throw new Error(errorText);
+      }
 
-      toast.success(`Marked as ${status}`);
+      toast.success(`Marked as ${status}`, {
+        description: "Variance has been saved to the database",
+      });
       fetchDiscrepancies();
     } catch (err) {
       toast.error("Update failed", {
@@ -162,9 +200,23 @@ export function DiscrepancyApprovals() {
   };
 
   // Calculate summary stats from GRNs
-  const pendingCount = grns.filter(g => g.status === "pending").length;
-  const approvedCount = grns.filter(g => g.status === "approved").length;
-  const rejectedCount = grns.filter(g => g.status === "rejected").length;
+  const normalizeStatus = (rawStatus: string | null | undefined) => {
+    const s = (rawStatus ?? "").toLowerCase();
+
+    // map DB statuses to UI statuses
+    if (s === "approved") return "approved";
+    if (s === "rejected") return "rejected";
+
+    // treat these as "pending review"
+    if (s === "draft" || s === "posted" || s === "pending") return "pending";
+
+    // fallback
+    return "pending";
+  };
+
+  const pendingCount = grns.filter(g => normalizeStatus(g.status) === "pending").length;
+  const approvedCount = grns.filter(g => normalizeStatus(g.status) === "approved").length;
+  const rejectedCount = grns.filter(g => normalizeStatus(g.status) === "rejected").length;
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -278,10 +330,13 @@ export function DiscrepancyApprovals() {
               </div>
             ) : (
               discrepancyCards.map(({ grn, line }) => {
+                // ✅ VARIANCE CALCULATION: Physical Count - Database Stock
+                // Formula: qty_received (Physical) - qty_expected (Database)
+                // Positive variance = Overage, Negative variance = Shortage
                 const variance = line.qty_received - line.qty_expected;
                 
-                const status = (grn.status ?? "").toLowerCase();
-                const canTakeAction = !["approved", "rejected"].includes(status);
+                const uiStatus = normalizeStatus(grn.status);
+                const canTakeAction = uiStatus === "pending";
 
                 return (
                   <Card key={line.id} className="border-[#111827]/10">
@@ -295,9 +350,18 @@ export function DiscrepancyApprovals() {
                                 <span className="font-mono text-[#00A3AD] font-semibold">
                                   {grn.grn_number}
                                 </span>
-                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(grn.status)}`}>
-                                  {grn.status.toUpperCase()}
-                                </span>
+                                <span
+                                className={[
+                                  "inline-flex items-center justify-center",
+                                  "px-2.5 py-1",
+                                  "rounded-full",
+                                  "text-[11px] font-semibold leading-none",
+                                  "uppercase tracking-wide",
+                                  getStatusColor(uiStatus),
+                                ].join(" ")}
+                              >
+                                {uiStatus}
+                              </span>
                               </div>
                               <h3 className="text-lg font-semibold text-[#111827]">
                                 {line.product_name}
@@ -373,7 +437,7 @@ export function DiscrepancyApprovals() {
                           ) : (
                             <div className="text-center p-4 bg-[#F8FAFC] rounded-lg">
                               <p className="text-sm text-[#6B7280]">
-                                This discrepancy has been {grn.status}
+                                This discrepancy has been {uiStatus}
                               </p>
                             </div>
                           )}
