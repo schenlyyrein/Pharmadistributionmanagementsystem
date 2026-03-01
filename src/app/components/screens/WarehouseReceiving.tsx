@@ -114,6 +114,19 @@ export function WarehouseReceiving() {
     useState<InventoryItem | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
+  const hasDiscrepancy = lines.some((line) => {
+  const expected = Number(line.qtyExpected);
+  const received = Number(line.qtyReceived);
+
+  return (
+    Number.isFinite(expected) &&
+    Number.isFinite(received) &&
+    line.qtyExpected !== "" &&
+    line.qtyReceived !== "" &&
+    expected !== received
+  );
+});
+
   const insertScannedItemToLines = (item: InventoryItem) => {
     setLines((prev) => {
       if (prev.length === 1 && !prev[0].productId) {
@@ -255,6 +268,12 @@ export function WarehouseReceiving() {
       .replace(/:/g, "");
     const grnNumber = `GRN-${dateStamp}-${timeStamp}`;
 
+    const hasDiscrepancy = lines.some((line) => {
+    const expected = Number(line.qtyExpected)
+    const received = Number(line.qtyReceived)
+    return Number.isFinite(expected) && Number.isFinite(received) && expected !== received
+})
+
     const headerPayload = {
       id: grnId,
       grn_number: grnNumber,
@@ -262,6 +281,7 @@ export function WarehouseReceiving() {
       notes: notes.trim() || null,
       status: "draft",
       created_by: "warehouse_operator",
+      has_discrepancy: hasDiscrepancy,
     };
 
     const linePayload = lines.map((line, idx) => {
@@ -375,6 +395,17 @@ export function WarehouseReceiving() {
 
       {showGrnForm && (
         <>
+
+          {hasDiscrepancy && (
+  <div className="inline-flex items-center px-3 py-1 rounded-full bg-[#F97316] text-white text-xs font-semibold">
+    Discrepancy detected
+  </div>
+)}
+          {hasDiscrepancy && (
+  <div className="mb-4 px-3 py-2 rounded-md bg-[#F97316] text-white font-semibold">
+    Discrepancy detected
+  </div>
+)}
           <Card className="bg-white border-[#111827]/10 shadow-lg">
             <CardHeader>
               <CardTitle className="text-[#111827] font-semibold">

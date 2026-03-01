@@ -35,7 +35,7 @@ interface Product {
   id: string;
   sku: string;
   name: string;
-  category: "Pharma" | "Medical Supplies" | "Cold Chain";
+  category_id: string;
   barcode: string;
   supplier: string;
   minStock: number;
@@ -45,12 +45,66 @@ interface Product {
   createdAt?: string;
 }
 
+type ProductCategory = {
+  id: string
+  name: string
+  parent_id: string | null
+}
+
+type CategoryOption = {
+  id: string
+  label: string
+}
+
+const buildCategoryOptions = (rows: ProductCategory[]): CategoryOption[] => {
+  const byId = new Map(rows.map(r => [r.id, r]))
+  const labelCache = new Map<string, string>()
+
+  const makeLabel = (id: string): string => {
+    if (labelCache.has(id)) return labelCache.get(id)!
+    const node = byId.get(id)
+    if (!node) return ""
+    if (!node.parent_id) {
+      labelCache.set(id, node.name)
+      return node.name
+    }
+    const parentLabel = makeLabel(node.parent_id)
+    const full = parentLabel ? `${parentLabel} > ${node.name}` : node.name
+    labelCache.set(id, full)
+    return full
+  }
+
+  return rows
+    .map(r => ({ id: r.id, label: makeLabel(r.id) }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+}
+
+const getDescendantIds = (all: ProductCategory[], parentId: string) => {
+  const childrenByParent = new Map<string, string[]>()
+  all.forEach(c => {
+    if (!c.parent_id) return
+    const arr = childrenByParent.get(c.parent_id) || []
+    arr.push(c.id)
+    childrenByParent.set(c.parent_id, arr)
+  })
+
+  const result = new Set<string>()
+  const stack = [parentId]
+  while (stack.length) {
+    const id = stack.pop()!
+    result.add(id)
+    const kids = childrenByParent.get(id) || []
+    kids.forEach(k => stack.push(k))
+  }
+  return Array.from(result)
+}
+
 const mockProducts: Product[] = [
   {
     id: "1",
     sku: "AMX-500",
     name: "Amoxicillin 500mg",
-    category: "Pharma",
+    category_id: "pharma",
     barcode: "4987654321098",
     supplier: "Takeda Pharmaceutical",
     minStock: 1000,
@@ -62,7 +116,7 @@ const mockProducts: Product[] = [
     id: "2",
     sku: "PAR-500",
     name: "Paracetamol 500mg",
-    category: "Pharma",
+    category_id: "pharma",
     barcode: "4987654321105",
     supplier: "Astellas Pharma",
     minStock: 1500,
@@ -74,7 +128,7 @@ const mockProducts: Product[] = [
     id: "3",
     sku: "SYR-50ML",
     name: "Medical Syringe 50ml (Sterile)",
-    category: "Medical Supplies",
+    category_id: "medical_supplies",
     barcode: "4987654321112",
     supplier: "Terumo Corporation",
     minStock: 500,
@@ -86,7 +140,7 @@ const mockProducts: Product[] = [
     id: "4",
     sku: "VAC-COVID",
     name: "COVID-19 Vaccine (Pfizer)",
-    category: "Cold Chain",
+    category_id: "cold_chain",
     barcode: "4987654321129",
     supplier: "Pfizer Japan",
     minStock: 100,
@@ -109,9 +163,15 @@ export function ProductMaster() {
   const [lastPayload, setLastPayload] = useState<any>(null);
   const [lastResponse, setLastResponse] = useState<any>(null);
 
+  const [categories, setCategories] = useState<ProductCategory[]>([])
+  const [selectedParentCategoryId, setSelectedParentCategoryId] = useState<string>("")
+  const [selectedChildCategoryId, setSelectedChildCategoryId] = useState<string>("")
+  const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([])
+
+  
   const [formData, setFormData] = useState({
     productName: "",
-    category: "",
+    category_id: "",
     barcode: "",
     supplier: "",
     location: "",
@@ -156,7 +216,7 @@ export function ProductMaster() {
           id: p.id?.toString() || Date.now().toString(),
           sku: p.sku || "",
           name: p.product_name || p.name || "",
-          category: (p.category || "Pharma") as Product["category"],
+          category_id: (p.category || "Pharma") as Product["category_id"],
           barcode: p.barcode || "",
           supplier: p.supplier || "",
           minStock: p.min_stock_level || 0,
@@ -178,12 +238,47 @@ export function ProductMaster() {
     loadProducts();
   }, []);
 
+  // Fetch categories from database
+  useEffect(() => {
+    const loadCategories = async () => {
+      try {
+        addDebugLog("info", "Loading categories from database");
+        const categoriesUrl = `https://${projectId}.supabase.co/rest/v1/product_categories?select=id,name,parent_id`;
+        const response = await fetch(categoriesUrl, {
+          method: "GET",
+          headers: {
+            apikey: publicAnonKey,
+            Authorization: `Bearer ${publicAnonKey}`,
+            "Content-Type": "application/json"
+          }
+        });
+
+        if (!response.ok) {
+          addDebugLog("error", `Categories load failed (${response.status})`);
+          return;
+        }
+
+        const fetchedCategories = await response.json();
+        setCategories(fetchedCategories);
+        
+        const options = buildCategoryOptions(fetchedCategories);
+        setCategoryOptions(options);
+        
+        addDebugLog("success", `Loaded ${fetchedCategories.length} categories with hierarchy`);
+      } catch (error) {
+        addDebugLog("error", "Failed to load categories", error);
+      }
+    };
+
+    loadCategories();
+  }, []);
+
   const filteredProducts = useMemo(() => {
     const filtered = products.filter((product) => {
       const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            product.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            product.barcode.includes(searchTerm);
-      const matchesCategory = categoryFilter === "all" || product.category === categoryFilter;
+      const matchesCategory = categoryFilter === "all" || product.category_id === categoryFilter;
       const matchesLocation = locationFilter === "all" || product.location.includes(locationFilter);
       return matchesSearch && matchesCategory && matchesLocation;
     });
@@ -196,11 +291,26 @@ export function ProductMaster() {
     });
   }, [products, searchTerm, categoryFilter, locationFilter]);
 
+  const parentCategories = useMemo(
+  () => categories.filter(c => !c.parent_id),
+  [categories]
+)
+
+const childCategories = useMemo(() => {
+  if (!selectedParentCategoryId) return []
+  return categories.filter(c => c.parent_id === selectedParentCategoryId)
+}, [categories, selectedParentCategoryId])
+
+const categoryLabelById = useMemo(() => {
+  const options = buildCategoryOptions(categories)
+  return new Map(options.map(o => [o.id, o.label]))
+}, [categories])
+
   const getCategoryColor = (category: string) => {
     switch (category) {
-      case "Pharma": return "bg-[#00A3AD] text-white";
-      case "Medical Supplies": return "bg-[#1A2B47] text-white";
-      case "Cold Chain": return "bg-[#0891B2] text-white";
+      case "pharma": return "bg-[#00A3AD] text-white";
+      case "medical_supplies": return "bg-[#1A2B47] text-white";
+      case "cold_chain": return "bg-[#0891B2] text-white";
       default: return "bg-[#D1D5DB] text-[#111827]";
     }
   };
@@ -213,7 +323,7 @@ export function ProductMaster() {
   };
 
   const handleAddProduct = async () => {
-    if (!formData.productName || !formData.category || !formData.barcode ||
+    if (!formData.productName || !formData.category_id || !formData.barcode ||
         !formData.supplier || !formData.location || !formData.minStock || !formData.unitPrice) {
       addDebugLog("error", "Validation failed - missing required fields");
       toast.error("Missing Fields", {
@@ -226,14 +336,13 @@ export function ProductMaster() {
     addDebugLog("info", "Starting product submission via Supabase REST API");
 
     try {
-      const generatedSKU = generateSKU(formData.productName, formData.category);
+      const generatedSKU = generateSKU(formData.productName, formData.category_id);
       addDebugLog("info", `Generated SKU: ${generatedSKU}`);
 
       const productPayload = {
         sku: generatedSKU,
         product_name: formData.productName,
-        category: formData.category === "pharma" ? "Pharma" :
-                 formData.category === "medical" ? "Medical Supplies" : "Cold Chain",
+        category_id: formData.category_id,
         barcode: formData.barcode,
         supplier: formData.supplier,
         warehouse_location: formData.location,
@@ -305,7 +414,7 @@ export function ProductMaster() {
           id: p.id?.toString() || Date.now().toString(),
           sku: p.sku,
           name: p.product_name,
-          category: p.category,
+          category_id: p.category,
           barcode: p.barcode,
           supplier: p.supplier,
           minStock: p.min_stock_level,
@@ -331,7 +440,7 @@ export function ProductMaster() {
 
       setFormData({
         productName: "",
-        category: "",
+        category_id: "",
         barcode: "",
         supplier: "",
         location: "",
@@ -395,15 +504,52 @@ export function ProductMaster() {
                   <Input placeholder="Enter product name" className="mt-2 border-[#111827]/10" value={formData.productName} onChange={(e) => setFormData({ ...formData, productName: e.target.value })} />
                 </div>
                 <div>
-                  <Label>Category</Label>
-                  <Select value={formData.category} onValueChange={(value) => setFormData({ ...formData, category: value })}>
+                  <Label className="text-[#6B7280]">Category (Parent)</Label>
+                  <Select
+                    value={selectedParentCategoryId}
+                    onValueChange={(value) => {
+                      setSelectedParentCategoryId(value)
+                      setSelectedChildCategoryId("") // reset child when parent changes
+                      setFormData(prev => ({ ...prev, category_id: value })) // default to parent
+                    }}
+                  >
                     <SelectTrigger className="mt-2 border-[#111827]/10">
-                      <SelectValue placeholder="Select category" />
+                      <SelectValue placeholder="Select parent category" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="pharma">Pharma</SelectItem>
-                      <SelectItem value="medical">Medical Supplies</SelectItem>
-                      <SelectItem value="cold">Cold Chain</SelectItem>
+                      {parentCategories.length > 0 ? (
+                        parentCategories.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="loading" disabled>Loading...</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <Label className="text-[#6B7280] mt-4 block">Subcategory (Optional)</Label>
+                  <Select
+                    value={selectedChildCategoryId}
+                    onValueChange={(value) => {
+                      setSelectedChildCategoryId(value)
+                      setFormData(prev => ({ ...prev, category_id: value })) // use child as final
+                    }}
+                    disabled={!selectedParentCategoryId || childCategories.length === 0}
+                  >
+                    <SelectTrigger className="mt-2 border-[#111827]/10">
+                      <SelectValue placeholder={!selectedParentCategoryId ? "Select parent first" : "Select subcategory"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {childCategories.length > 0 ? (
+                        childCategories.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="none" disabled>No subcategories</SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -513,7 +659,7 @@ export function ProductMaster() {
                   <tr key={product.id} className="border-b border-[#E5E7EB] hover:bg-[#F8FAFC] transition-colors">
                     <td className="py-4 px-4"><span className="font-mono text-[#00A3AD] font-semibold">{product.sku}</span></td>
                     <td className="py-4 px-4 text-[#111827] font-medium">{product.name}</td>
-                    <td className="py-4 px-4"><span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${getCategoryColor(product.category)}`}>{product.category}</span></td>
+                    <td className="py-4 px-4"><span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${getCategoryColor(product.category_id)}`}>{categoryLabelById.get(product.category_id) || "—"}</span></td>
                     <td className="py-4 px-4"><div className="flex items-center gap-2"><Barcode className="w-4 h-4 text-[#6B7280]" /><span className="font-mono text-sm text-[#111827]">{product.barcode}</span></div></td>
                     <td className="py-4 px-4 text-sm text-[#6B7280]">{product.supplier}</td>
                     <td className="py-4 px-4 text-right">
@@ -541,7 +687,7 @@ export function ProductMaster() {
         <Card className="bg-white border-[#111827]/10"><CardContent className="pt-6"><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-lg bg-[#00A3AD]/10 flex items-center justify-center"><Package className="w-6 h-6 text-[#00A3AD]" /></div><div><div className="text-2xl font-bold text-[#111827]">{products.length}</div><div className="text-sm text-[#6B7280]">Total Products</div></div></div></CardContent></Card>
         <Card className="bg-white border-[#111827]/10"><CardContent className="pt-6"><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-lg bg-[#1A2B47]/10 flex items-center justify-center"><Barcode className="w-6 h-6 text-[#1A2B47]" /></div><div><div className="text-2xl font-bold text-[#111827]">{products.length}</div><div className="text-sm text-[#6B7280]">Unique SKUs</div></div></div></CardContent></Card>
         <Card className="bg-white border-[#111827]/10"><CardContent className="pt-6"><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-lg bg-[#F97316]/10 flex items-center justify-center"><Package className="w-6 h-6 text-[#F97316]" /></div><div><div className="text-2xl font-bold text-[#F97316]">{products.filter((p) => p.currentStock < p.minStock).length}</div><div className="text-sm text-[#6B7280]">Low Stock Items</div></div></div></CardContent></Card>
-        <Card className="bg-white border-[#111827]/10"><CardContent className="pt-6"><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-lg bg-[#0891B2]/10 flex items-center justify-center"><Package className="w-6 h-6 text-[#0891B2]" /></div><div><div className="text-2xl font-bold text-[#111827]">{products.filter((p) => p.category === "Cold Chain").reduce((sum, p) => sum + p.currentStock, 0)}</div><div className="text-sm text-[#6B7280]">Cold Chain Units</div></div></div></CardContent></Card>
+        <Card className="bg-white border-[#111827]/10"><CardContent className="pt-6"><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-lg bg-[#0891B2]/10 flex items-center justify-center"><Package className="w-6 h-6 text-[#0891B2]" /></div><div><div className="text-2xl font-bold text-[#111827]">{products.filter((p) => p.category_id === "cold_chain").reduce((sum, p) => sum + p.currentStock, 0)}</div><div className="text-sm text-[#6B7280]">Cold Chain Units</div></div></div></CardContent></Card>
       </div>
 
       <Card className="bg-[#1A2B47] border-[#00A3AD] shadow-xl">
