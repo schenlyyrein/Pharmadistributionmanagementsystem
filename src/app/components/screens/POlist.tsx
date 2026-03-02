@@ -409,7 +409,7 @@ export function POList() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <span className="text-xs text-[#00A3AD] font-semibold hover:underline">
-                          View â†’
+                          View all →
                         </span>
                       </td>
                     </tr>

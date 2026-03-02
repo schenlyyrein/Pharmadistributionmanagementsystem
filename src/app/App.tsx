@@ -1,3 +1,4 @@
+// src/app/App.tsx
 import {
   BrowserRouter,
   Routes,
@@ -14,6 +15,7 @@ import { WarehouseReceiving } from "./components/screens/WarehouseReceiving";
 import { StockManagement } from "./components/screens/StockManagement";
 import { OutboundDistribution } from "./components/screens/OutboundDistribution";
 import { DiscrepancyApprovals } from "./components/screens/DiscrepancyApprovals";
+import { POList } from "./components/screens/POlist";
 
 export default function App() {
   return (
@@ -52,6 +54,10 @@ export default function App() {
                   <Route
                     path="/procurement"
                     element={<InboundProcurement />}
+                  />
+                  <Route
+                    path="/po-list"
+                    element={<POList />}
                   />
                   <Route
                     path="/warehouse"

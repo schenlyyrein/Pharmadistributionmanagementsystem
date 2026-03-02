@@ -54,6 +54,14 @@ interface GrnLine {
 
 const MIN_STOCK_THRESHOLD = 500;
 
+const getTodayLocalDate = (): string => {
+  const now = new Date();
+  const localTime = new Date(
+    now.getTime() - now.getTimezoneOffset() * 60000,
+  );
+  return localTime.toISOString().slice(0, 10);
+};
+
 const createEmptyLine = (): GrnLine => ({
   lineId: crypto.randomUUID(),
   productId: "",
@@ -66,7 +74,7 @@ const createEmptyLine = (): GrnLine => ({
 export function WarehouseReceiving() {
   const [showGrnForm, setShowGrnForm] = useState(false);
   const [receivedDate, setReceivedDate] = useState(
-    new Date().toISOString().split("T")[0],
+    getTodayLocalDate(),
   );
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<GrnLine[]>([
@@ -263,11 +271,13 @@ export function WarehouseReceiving() {
   const removeLine = (lineId: string) => {
     setSavedGrnId(null);
     setSavedGrnNumber(null);
-    setLines((prev) =>
-      prev.length === 1
-        ? prev
-        : prev.filter((l) => l.lineId !== lineId),
-    );
+    setLines((prev) => {
+      if (prev.length === 1) {
+        return [createEmptyLine()];
+      }
+      const next = prev.filter((l) => l.lineId !== lineId);
+      return next.length > 0 ? next : [createEmptyLine()];
+    });
   };
   const updateLine = (
     lineId: string,
@@ -484,7 +494,7 @@ export function WarehouseReceiving() {
       await fetchInventory();
 
       setTimeout(() => {
-        setReceivedDate(new Date().toISOString().split("T")[0]);
+        setReceivedDate(getTodayLocalDate());
         setNotes("");
         setLines([createEmptyLine()]);
         setShowGrnForm(false);
@@ -602,14 +612,24 @@ export function WarehouseReceiving() {
                         variant="outline"
                         className="border-[#DC2626] text-[#DC2626] hover:bg-[#DC2626]/10"
                         onClick={() => removeLine(line.lineId)}
-                        disabled={
-                          lines.length === 1 || isPosted
-                        }
+                        disabled={isPosted}
                       >
                         <Trash2 className="w-4 h-4 mr-2" />
                         Remove
                       </Button>
                     </div>
+                    {mismatch && (
+                      <div className="rounded-md border border-[#F97316]/40 bg-[#FFF7ED] px-3 py-2">
+                        <p className="text-sm font-semibold text-[#C2410C]">
+                          Discrepancy detected
+                        </p>
+                        <p className="text-xs text-[#9A3412]">
+                          Expected and received quantities do
+                          not match. Please select a discrepancy
+                          reason.
+                        </p>
+                      </div>
+                    )}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <Label className="text-[#6B7280]">

@@ -55,6 +55,7 @@ interface Product {
   currentStock: number;
   inventoryUpdatedAt?: string | null;
   unitPrice: number;
+  currencyCode?: string | null;
   location: string;
   createdAt?: string;
 }
@@ -138,26 +139,28 @@ export function ProductMaster() {
   ] = useState<string>("");
   const [selectedChildCategoryId, setSelectedChildCategoryId] =
     useState<string>("");
-  const [formData, setFormData] = useState({
-    productName: "",
-    category_id: "",
-    unit: "",
-    barcode: "",
-    supplier: "",
-    location: "",
-    unitPrice: "",
-    currentStock: "0",
-  });
+ const [formData, setFormData] = useState({
+  productName: "",
+  category_id: "",
+  barcode: "",
+  unit: "",
+  supplier: "",
+  location: "",
+  unitPrice: "",
+  currencyCode: "PHP", // ✅ default
+  currentStock: "0",
+});
   const [editFormData, setEditFormData] = useState({
-    productName: "",
-    category_id: "",
-    unit: "",
-    barcode: "",
-    supplier: "",
-    location: "",
-    unitPrice: "0",
-    currentStock: "0",
-  });
+  productName: "",
+  category_id: "",
+  unit: "",
+  barcode: "",
+  supplier: "",
+  location: "",
+  unitPrice: "0",
+  currencyCode: "PHP",
+  currentStock: "0",
+});
 
   const addDebugLog = (
     type: string,
@@ -175,7 +178,7 @@ export function ProductMaster() {
   };
 
   const loadProducts = async () => {
-    const productsUrl = `https://${projectId}.supabase.co/rest/v1/products?select=product_id,product_uuid,sku,product_name,unit,category,category_id,barcode,supplier,warehouse_location,unit_price,inventory_on_hand,created_at`;
+    const productsUrl = `https://${projectId}.supabase.co/rest/v1/products?select=product_id,product_uuid,sku,product_name,unit,category,category_id,barcode,supplier,warehouse_location,unit_price,currency_code,inventory_on_hand,created_at`;
     const inventoryUrl = `https://${projectId}.supabase.co/rest/v1/v_products_with_inventory?select=product_id,qty_on_hand,updated_at`;
 
     try {
@@ -245,6 +248,7 @@ export function ProductMaster() {
               0,
             inventoryUpdatedAt: inventory?.updated_at || null,
             unitPrice: p.unit_price || 0,
+            currencyCode: p.currency_code || "PHP",
             location: p.warehouse_location || "",
             createdAt: p.created_at || null,
           };
@@ -360,7 +364,6 @@ export function ProductMaster() {
         matchesLocation
       );
     });
-
     return [...filtered].sort((a, b) => {
       if (a.createdAt && b.createdAt) {
         return (
@@ -403,6 +406,34 @@ export function ProductMaster() {
     return new Map(options.map((o) => [o.id, o.label]));
   }, [categories]);
 
+  const getCategoryText = (categoryId: string): string => {
+    return (
+      categoryLabelById.get(categoryId) ||
+      categoriesById.get(categoryId)?.name ||
+      categoryId
+    );
+  };
+
+  const patchCategoryDisplay = async (
+    productId: string,
+    categoryText: string,
+  ) => {
+    if (!productId || !categoryText) return;
+    await fetch(
+      `https://${projectId}.supabase.co/rest/v1/products?product_id=eq.${encodeURIComponent(productId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          apikey: publicAnonKey,
+          Authorization: `Bearer ${publicAnonKey}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({ category: categoryText }),
+      },
+    );
+  };
+
   const locationOptions = useMemo(() => {
     return Array.from(
       new Set(products.map((p) => p.location).filter(Boolean)),
@@ -410,6 +441,7 @@ export function ProductMaster() {
   }, [products]);
 
   const unitOptions = ["bottle", "box", "pcs"] as const;
+  const currencyOptions = ["PHP", "USD", "EUR"] as const;
 
   const getCategoryColor = (category: string) => {
     switch (category) {
@@ -563,7 +595,7 @@ export function ProductMaster() {
       );
       const idx = (name: string) => headers.indexOf(name);
 
-      const payload = lines
+      const rowsToInsert = lines
         .slice(1)
         .map((line) => {
           const cells = parseCsvLine(line);
@@ -576,6 +608,7 @@ export function ProductMaster() {
             sku,
             product_name: productName,
             category_id: categoryId,
+            category: getCategoryText(categoryId),
             barcode: cells[idx("barcode")] || "",
             supplier: cells[idx("supplier")] || "",
             warehouse_location:
@@ -596,35 +629,45 @@ export function ProductMaster() {
             p.warehouse_location,
         );
 
-      if (payload.length === 0) {
+      if (rowsToInsert.length === 0) {
         toast.error("No valid rows in CSV", {
           description:
             "Required: product_name, category_id, barcode, supplier, warehouse_location",
         });
         return;
       }
-
-      const response = await fetch(
-        `https://${projectId}.supabase.co/rest/v1/products`,
-        {
-          method: "POST",
-          headers: {
-            apikey: publicAnonKey,
-            Authorization: `Bearer ${publicAnonKey}`,
-            "Content-Type": "application/json",
-            Prefer: "return=minimal",
+      let inserted = 0;
+      for (const row of rowsToInsert) {
+        const response = await fetch(
+          `https://${projectId}.supabase.co/rest/v1/products?select=product_id`,
+          {
+            method: "POST",
+            headers: {
+              apikey: publicAnonKey,
+              Authorization: `Bearer ${publicAnonKey}`,
+              "Content-Type": "application/json",
+              Prefer: "return=representation",
+            },
+            body: JSON.stringify(row),
           },
-          body: JSON.stringify(payload),
-        },
-      );
-
-      if (!response.ok) {
-        throw new Error(await response.text());
+        );
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+        const insertedRows = await response.json();
+        const insertedProductId = insertedRows?.[0]?.product_id;
+        if (insertedProductId) {
+          await patchCategoryDisplay(
+            String(insertedProductId),
+            row.category,
+          );
+        }
+        inserted += 1;
       }
 
       await loadProducts();
       toast.success("CSV imported", {
-        description: `${payload.length} product(s) inserted`,
+        description: `${inserted} product(s) inserted`,
       });
     } catch (error) {
       const message =
@@ -643,19 +686,20 @@ export function ProductMaster() {
   };
 
   const openEditProduct = (product: Product) => {
-    setSelectedProduct(product);
-    setEditFormData({
-      productName: product.name,
-      category_id: product.category_id || "",
-      unit: product.unit || "",
-      barcode: product.barcode || "",
-      supplier: product.supplier || "",
-      location: product.location || "",
-      unitPrice: String(product.unitPrice ?? 0),
-      currentStock: String(product.currentStock ?? 0),
-    });
-    setShowEditDialog(true);
-  };
+  setSelectedProduct(product);
+  setEditFormData({
+    productName: product.name,
+    category_id: product.category_id || "",
+    unit: product.unit || "",
+    barcode: product.barcode || "",
+    supplier: product.supplier || "",
+    location: product.location || "",
+    unitPrice: String(product.unitPrice ?? 0),
+    currencyCode: (product as any).currencyCode || "PHP",
+    currentStock: String(product.currentStock ?? 0),
+  });
+  setShowEditDialog(true);
+};
 
   const syncInventoryOnHand = async (
     productUuid: string,
@@ -732,20 +776,36 @@ export function ProductMaster() {
 
   const handleUpdateProduct = async () => {
     if (!selectedProduct) return;
-    if (
-      !editFormData.productName ||
-      !editFormData.category_id ||
-      !editFormData.unit ||
-      !editFormData.barcode ||
-      !editFormData.supplier ||
-      !editFormData.location ||
-      !editFormData.unitPrice
-    ) {
+    const resolvedUpdateCategoryId =
+      editFormData.category_id?.trim() || "";
+    const resolvedUpdateUnit =
+      editFormData.unit?.trim() || "pcs";
+    const missingUpdateFields: string[] = [];
+    if (!editFormData.productName?.trim())
+      missingUpdateFields.push("Product Name");
+    if (!resolvedUpdateCategoryId)
+      missingUpdateFields.push("Category");
+    if (!resolvedUpdateUnit) missingUpdateFields.push("Unit");
+    if (!editFormData.barcode?.trim())
+      missingUpdateFields.push("Barcode");
+    if (!editFormData.supplier?.trim())
+      missingUpdateFields.push("Supplier");
+    if (!editFormData.location?.trim())
+      missingUpdateFields.push("Warehouse Location");
+    if (!editFormData.unitPrice?.trim())
+      missingUpdateFields.push("Unit Price");
+
+    if (!editFormData.currencyCode?.trim()) {
+      missingUpdateFields.push("Currency Code");
+    }
+
+    if (missingUpdateFields.length > 0) {
       toast.error("Missing Fields", {
-        description: "Please fill in all required fields",
+        description: `Please fill in: ${missingUpdateFields.join(", ")}`,
       });
       return;
     }
+    
     if (!isValidBarcode(editFormData.barcode)) {
       toast.error("Invalid Barcode", {
         description: "Barcode must be exactly 13 digits",
@@ -762,12 +822,14 @@ export function ProductMaster() {
       };
 
       const payload = {
-        product_name: editFormData.productName,
-        category_id: editFormData.category_id,
-        unit: editFormData.unit,
+        product_name: editFormData.productName.trim(),
+        category_id: resolvedUpdateCategoryId,
+        category: getCategoryText(resolvedUpdateCategoryId),
+        unit: resolvedUpdateUnit,
         barcode: sanitizeBarcodeInput(editFormData.barcode),
-        supplier: editFormData.supplier,
-        warehouse_location: editFormData.location,
+        supplier: editFormData.supplier.trim(),
+        warehouse_location: editFormData.location.trim(),
+        currency_code: editFormData.currencyCode.trim(),
         unit_price: parseFloat(editFormData.unitPrice),
         inventory_on_hand:
           parseInt(editFormData.currentStock || "0", 10) || 0,
@@ -784,6 +846,10 @@ export function ProductMaster() {
       if (!updateRes.ok) {
         throw new Error(await updateRes.text());
       }
+      await patchCategoryDisplay(
+        selectedProduct.id,
+        getCategoryText(resolvedUpdateCategoryId),
+      );
 
       if (selectedProduct.product_uuid) {
         await syncInventoryOnHand(
@@ -811,7 +877,6 @@ export function ProductMaster() {
 
   const handleDeleteProduct = async () => {
     if (!selectedProduct) return;
-
     setIsDeleting(true);
     try {
       addDebugLog(
@@ -890,21 +955,34 @@ export function ProductMaster() {
   };
 
   const handleAddProduct = async () => {
-    if (
-      !formData.productName ||
-      !formData.category_id ||
-      !formData.unit ||
-      !formData.barcode ||
-      !formData.supplier ||
-      !formData.location ||
-      !formData.unitPrice
-    ) {
+    const resolvedCategoryId =
+      formData.category_id ||
+      selectedChildCategoryId ||
+      selectedParentCategoryId ||
+      "";
+    const resolvedUnit = formData.unit?.trim() || "pcs";
+    const missingFields: string[] = [];
+    if (!formData.productName?.trim())
+      missingFields.push("Product Name");
+    if (!resolvedCategoryId) missingFields.push("Category");
+    if (!resolvedUnit) missingFields.push("Unit");
+    if (!formData.barcode?.trim())
+      missingFields.push("Barcode");
+    if (!formData.supplier?.trim())
+      missingFields.push("Supplier");
+    if (!formData.location?.trim())
+      missingFields.push("Warehouse Location");
+    if (!formData.unitPrice?.trim())
+      missingFields.push("Unit Price");
+
+    if (missingFields.length > 0) {
       addDebugLog(
         "error",
         "Validation failed - missing required fields",
+        missingFields,
       );
       toast.error("Missing Fields", {
-        description: "Please fill in all required fields",
+        description: `Please fill in: ${missingFields.join(", ")}`,
       });
       return;
     }
@@ -928,21 +1006,23 @@ export function ProductMaster() {
     try {
       const generatedSKU = generateSKU(
         formData.productName,
-        formData.category_id,
+        resolvedCategoryId,
       );
       addDebugLog("info", `Generated SKU: ${generatedSKU}`);
 
       const productPayload = {
         sku: generatedSKU,
-        product_name: formData.productName,
-        category_id: formData.category_id,
-        unit: formData.unit || null,
+        product_name: formData.productName.trim(),
+        category_id: resolvedCategoryId,
+        category: getCategoryText(resolvedCategoryId),
+        unit: resolvedUnit,
         barcode: sanitizeBarcodeInput(formData.barcode),
-        supplier: formData.supplier,
-        warehouse_location: formData.location,
+        supplier: formData.supplier.trim(),
+        warehouse_location: formData.location.trim(),
         unit_price: parseFloat(formData.unitPrice),
-        inventory_on_hand:
-          parseInt(formData.currentStock || "0", 10) || 0,
+        currency_code: formData.currencyCode || "PHP",
+        inventory_on_hand: parseInt(formData.currentStock || "0", 10) || 0,
+        created_at: new Date().toISOString(),
       };
 
       setLastPayload(productPayload);
@@ -964,11 +1044,17 @@ export function ProductMaster() {
         "Content-Type": "application/json",
       };
 
-      const response = await fetch(apiUrl, {
-        method: "POST",
-        headers: headers,
-        body: JSON.stringify(productPayload),
-      });
+      const response = await fetch(
+        `${apiUrl}?select=product_id`,
+        {
+          method: "POST",
+          headers: {
+            ...headers,
+            Prefer: "return=representation",
+          },
+          body: JSON.stringify(productPayload),
+        },
+      );
 
       addDebugLog(
         "info",
@@ -1010,6 +1096,15 @@ export function ProductMaster() {
         );
       }
 
+      const insertedRows = await response.json();
+      const insertedProductId = insertedRows?.[0]?.product_id;
+      if (insertedProductId) {
+        await patchCategoryDisplay(
+          String(insertedProductId),
+          getCategoryText(resolvedCategoryId),
+        );
+      }
+
       addDebugLog(
         "success",
         "Product inserted successfully (HTTP 201)",
@@ -1036,6 +1131,7 @@ export function ProductMaster() {
         supplier: "",
         location: "",
         unitPrice: "",
+        currencyCode: "",
         currentStock: "0",
       });
       setShowNewProductDialog(false);
@@ -1292,6 +1388,26 @@ export function ProductMaster() {
                     }
                   />
                 </div>
+
+                <div>
+                  <Label>Currency Code</Label>
+                  <Select
+                    value={editFormData.currencyCode}
+                    onValueChange={(value) =>
+                      setEditFormData({ ...editFormData, currencyCode: value })
+                    }
+                  >
+                    <SelectTrigger className="mt-2 border-[#111827]/10">
+                      <SelectValue placeholder="Select currency" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="PHP">PHP</SelectItem>
+                      <SelectItem value="USD">USD</SelectItem>
+                      <SelectItem value="EUR">EUR</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
                 <div>
                   <Label>Current Stock</Label>
                   <Input
@@ -1520,9 +1636,8 @@ export function ProductMaster() {
                       {product.supplier}
                     </td>
                     <td className="py-4 px-4 text-right text-sm text-[#111827] font-medium">
-                      {Number(
-                        product.unitPrice || 0,
-                      ).toLocaleString(undefined, {
+                      {product.currencyCode || "PHP"}{" "}
+                      {Number(product.unitPrice || 0).toLocaleString(undefined, {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}
@@ -1604,6 +1719,12 @@ export function ProductMaster() {
                 </div>
               </div>
               <div>
+              <span className="text-[#6B7280]">Currency</span>
+              <div className="font-medium text-[#111827]">
+                {selectedProduct.currencyCode || "-"}
+              </div>
+            </div>
+              <div>
                 <span className="text-[#6B7280]">
                   Product Name
                 </span>
@@ -1643,10 +1764,9 @@ export function ProductMaster() {
               <div>
                 <span className="text-[#6B7280]">Price</span>
                 <div className="font-medium text-[#111827]">
-                  {Number(
-                    selectedProduct.unitPrice || 0,
-                  ).toFixed(2)}
-                </div>
+                {selectedProduct.currencyCode || "PHP"}{" "}
+                {Number(selectedProduct.unitPrice || 0).toFixed(2)}
+              </div>
               </div>
               <div>
                 <span className="text-[#6B7280]">

@@ -1,3 +1,4 @@
+// src/app/components/DashboardLayout.tsx
 import { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import {
@@ -9,6 +10,7 @@ import {
   Database,
   BarChart3,
   ClipboardList,
+  FileText,
   LogOut,
   User,
 } from "lucide-react";
@@ -27,6 +29,7 @@ const navigation = [
   },
   { name: "Product Master", href: "/products", icon: Database },
   { name: "Procurement", href: "/procurement", icon: Package },
+  { name: "PO List", href: "/po-list", icon: FileText },
   { name: "Warehouse", href: "/warehouse", icon: Warehouse },
   {
     name: "Discrepancies",
