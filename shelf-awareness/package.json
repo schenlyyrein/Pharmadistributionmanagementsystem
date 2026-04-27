@@ -12,6 +12,8 @@
     "lint": "eslint .",
     "test": "jest --runInBand",
     "test:watch": "jest --watch",
+    "test:integration": "jest tests/integration --runInBand",
+    "test:coverage": "jest --coverage --runInBand",
     "test:e2e": "tsx tests/e2e/playwright-e2e.ts"
   },
   "dependencies": {

@@ -15,6 +15,17 @@ const customJestConfig = {
   },
   coverageReporters: ["json-summary", "text", "lcov"],
   collectCoverage: false,
+  collectCoverageFrom: ["src/lib/supplierService.ts"],
+  coverageThreshold: {
+    global: {
+      branches: 70,
+      functions: 70,
+      lines: 70,
+      statements: 70,
+    },
+  },
+  globalSetup: "<rootDir>/tests/setup/globalSetup.js",
+  globalTeardown: "<rootDir>/tests/setup/globalTeardown.js",
 };
 
 module.exports = createJestConfig(customJestConfig);
