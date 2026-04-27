@@ -174,3 +174,30 @@ export function assignSupplierGrade(score: number): "A" | "B" | "C" | "D" {
   if (score >= 70) return "C";
   return "D";
 }
+
+/**
+ * Assigns a risk level to a supplier based on three operational metrics.
+ *
+ * Evaluation order (most severe first):
+ *   "high"   – reliabilityScore < 70  OR  onTimeDeliveryPct < 85  OR  defectRate > 10
+ *   "medium" – reliabilityScore < 85  OR  onTimeDeliveryPct < 95  OR  defectRate > 5
+ *   "low"    – all metrics within acceptable bounds
+ *
+ * @param reliabilityScore  0–100  (higher is better)
+ * @param onTimeDeliveryPct 0–100  (higher is better)
+ * @param defectRate        0–100  (lower is better, expressed as a percentage)
+ * @returns "low" | "medium" | "high"
+ */
+export function assignSupplierRiskLevel(
+  reliabilityScore: number,
+  onTimeDeliveryPct: number,
+  defectRate: number,
+): "low" | "medium" | "high" {
+  if (reliabilityScore < 70 || onTimeDeliveryPct < 85 || defectRate > 10) {
+    return "high";
+  }
+  if (reliabilityScore < 85 || onTimeDeliveryPct < 95 || defectRate > 5) {
+    return "medium";
+  }
+  return "low";
+}
