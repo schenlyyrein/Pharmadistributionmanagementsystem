@@ -298,7 +298,7 @@ export function InboundProcurement() {
 
     try {
       const data =
-        await fetchSupplierScorecardFromService(supplier);
+        await fetchSupplierFromService(supplier);
       setSupplierScorecard(data ?? null);
     } catch (error) {
       console.error("Scorecard fetch error", error);

@@ -130,3 +130,47 @@ export const fetchSupplierByName = async (
 
   return payload.data;
 };
+
+// ---------------------------------------------------------------------------
+// Pure scorecard helpers (no I/O, safe to unit-test in isolation)
+// ---------------------------------------------------------------------------
+
+/**
+ * Calculates a supplier's weighted scorecard from three independent scores.
+ *
+ * Weights:
+ *   delivery  40 %
+ *   quality   40 %
+ *   price     20 %
+ *
+ * @param deliveryScore  0–100
+ * @param qualityScore   0–100
+ * @param priceScore     0–100
+ * @returns weighted composite score (0–100)
+ */
+export function calculateWeightedScorecard(
+  deliveryScore: number,
+  qualityScore: number,
+  priceScore: number,
+): number {
+  return deliveryScore * 0.4 + qualityScore * 0.4 + priceScore * 0.2;
+}
+
+/**
+ * Maps a composite score to a letter grade.
+ *
+ * Thresholds:
+ *   A  ≥ 90
+ *   B  80 – 89
+ *   C  70 – 79
+ *   D  < 70
+ *
+ * @param score composite score (0–100)
+ * @returns letter grade "A" | "B" | "C" | "D"
+ */
+export function assignSupplierGrade(score: number): "A" | "B" | "C" | "D" {
+  if (score >= 90) return "A";
+  if (score >= 80) return "B";
+  if (score >= 70) return "C";
+  return "D";
+}
