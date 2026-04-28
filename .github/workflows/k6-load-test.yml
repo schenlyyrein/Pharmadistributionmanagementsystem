@@ -30,11 +30,19 @@ jobs:
       - name: Run k6 Load Test
         working-directory: ./shelf-awareness
         env:
-          # Use manual input if provided, otherwise fallback to GitHub Secrets or Vars
+          # Use manual input if provided, otherwise fallback to GitHub Vars or Secrets
           BASE_URL: ${{ github.event.inputs.base_url || vars.BASE_URL || secrets.BASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          K6_PROMETHEUS_RW_SERVER_URL: ${{ secrets.K6_PROMETHEUS_RW_SERVER_URL }}
         run: |
           if [ -z "$SUPABASE_ANON_KEY" ]; then
             echo "Warning: SUPABASE_ANON_KEY is not set. Load test may fail if authentication is required."
           fi
-          k6 run tests/performance/scm-load-test.js
+          
+          if [ -n "$K6_PROMETHEUS_RW_SERVER_URL" ]; then
+            echo "Sending metrics to Prometheus Remote Write..."
+            k6 run -o experimental-prometheus-rw tests/performance/scm-load-test.js
+          else
+            echo "Running locally (no remote write configured)..."
+            k6 run tests/performance/scm-load-test.js
+          fi
