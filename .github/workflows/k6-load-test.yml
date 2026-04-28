@@ -1,0 +1,40 @@
+name: SCM Nightly Load Test
+
+on:
+  schedule:
+    # Run every night at 2:00 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Base URL for the load test (optional, overrides secret)'
+        required: false
+
+jobs:
+  load-test:
+    name: Run k6 Load Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Run k6 Load Test
+        working-directory: ./shelf-awareness
+        env:
+          # Use manual input if provided, otherwise fallback to GitHub Secrets or Vars
+          BASE_URL: ${{ github.event.inputs.base_url || vars.BASE_URL || secrets.BASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "Warning: SUPABASE_ANON_KEY is not set. Load test may fail if authentication is required."
+          fi
+          k6 run tests/performance/scm-load-test.js
