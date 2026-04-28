@@ -1,5 +1,10 @@
 import http from "k6/http";
 import { check, sleep } from "k6";
+import { Trend, Rate } from "k6/metrics";
+
+const poCreationDuration = new Trend("po_creation_duration");
+const scorecardReadDuration = new Trend("scorecard_read_duration");
+const scmErrorRate = new Rate("scm_error_rate");
 
 /**
  * SCM-S5-004-T1: Weighted Load Test for SCM procurement and supplier endpoints.
@@ -20,6 +25,11 @@ export const options = {
     { duration: "2m", target: 40 },  // Hold
     { duration: "30s", target: 0 },  // Ramp down
   ],
+  thresholds: {
+    po_creation_duration: ["p(95)<1000"],
+    scorecard_read_duration: ["p(95)<500"],
+    scm_error_rate: ["rate<0.01"],
+  },
 };
 
 // Common headers
@@ -42,9 +52,12 @@ function createPurchaseOrder() {
 
   const res = http.post(url, payload, { headers });
   
-  check(res, {
+  poCreationDuration.add(res.timings.duration);
+
+  const success = check(res, {
     "create PO status is 201 or 401/403": (r) => [201, 401, 403].includes(r.status),
   });
+  scmErrorRate.add(!success);
 }
 
 /**
@@ -57,9 +70,12 @@ function readSupplierScorecard() {
 
   const res = http.get(url, { headers });
 
-  check(res, {
+  scorecardReadDuration.add(res.timings.duration);
+
+  const success = check(res, {
     "read scorecard status is 200 or 401/403/404": (r) => [200, 401, 403, 404].includes(r.status),
   });
+  scmErrorRate.add(!success);
 }
 
 /**
@@ -70,9 +86,10 @@ function readShipments() {
 
   const res = http.get(url, { headers });
 
-  check(res, {
+  const success = check(res, {
     "read shipments status is 200 or 401/403/404": (r) => [200, 401, 403, 404].includes(r.status),
   });
+  scmErrorRate.add(!success);
 }
 
 /**
@@ -89,9 +106,10 @@ function approvePurchaseOrder() {
 
   const res = http.patch(url, payload, { headers });
 
-  check(res, {
+  const success = check(res, {
     "approve PO status is 200 or 204 or 401/403/404": (r) => [200, 204, 401, 403, 404].includes(r.status),
   });
+  scmErrorRate.add(!success);
 }
 
 export default function () {
