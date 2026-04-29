@@ -54,6 +54,11 @@ jobs:
 
       - name: Run Unit Tests
         run: npm run test -- --coverage --watchAll=false
+        env:
+          PROVIDER_BASE_URL: ${{ secrets.PROVIDER_BASE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
       - name: Run Integration Tests
         run: npm run test:integration --if-present
@@ -216,13 +221,10 @@ jobs:
       - name: Deploy to Staging
         run: |
           echo "Deploying frontend to staging..."
-          # Add your staging deployment logic here
-          # Example: AWS S3, Netlify, Vercel, etc.
           
       - name: Run Smoke Tests
         run: |
           echo "Running smoke tests against staging..."
-          # Add smoke test commands here
 
   # Deploy to Production (Frontend)
   deploy-production:
@@ -249,12 +251,10 @@ jobs:
       - name: Deploy to Production
         run: |
           echo "Deploying frontend to production..."
-          # Add your production deployment logic here
           
       - name: Run Production Smoke Tests
         run: |
           echo "Running smoke tests against production..."
-          # Add production smoke test commands here
 
       - name: Notify Deployment
         uses: 8398a7/action-slack@v3
