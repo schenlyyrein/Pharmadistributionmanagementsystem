@@ -96,6 +96,37 @@ export const fetchSupplierScorecard = async (
   return payload.data;
 };
 
+export type ProviderVerificationResult = {
+  verified: boolean;
+  supplier: SupplierRecord | null;
+  reason: string;
+};
+
+export const verifyProvider = async (
+  supplierName: string,
+): Promise<ProviderVerificationResult> => {
+  const normalized = supplierName.trim();
+  if (!normalized) {
+    return {
+      verified: false,
+      supplier: null,
+      reason: "Supplier name is required",
+    };
+  }
+
+  const url = new URL(
+    `${supplierServiceBaseUrl}/suppliers/verify`,
+  );
+  url.searchParams.set("name", normalized);
+
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as ProviderVerificationResult;
+};
+
 export const fetchSupplierByName = async (
   supplierName: string,
 ) => {
